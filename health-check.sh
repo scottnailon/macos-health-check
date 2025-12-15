@@ -153,11 +153,15 @@ echo ""
 printf "  ${BOLD}${WHITE}🔥 TOP CPU CONSUMERS${NC}\n"
 echo ""
 
-ps aux | awk 'NR>1 && $3~/^[0-9]/ {print}' | sort -k3 -rn | head -5 | while read -r pline; do
-    cpu=$(echo "$pline" | awk '{print $3}')
+# Use macOS native CPU sorting (-r flag) with headerless output (= suffix)
+ps -arcwwxo '%cpu=,pid=,comm=' 2>/dev/null | head -5 | while read -r cpu pid proc; do
+    # Skip if cpu is empty or not a number
+    case "$cpu" in
+        ''|*[!0-9.]*) continue ;;
+    esac
+
     cpu_int=$(echo "$cpu" | cut -d. -f1)
-    proc=$(echo "$pline" | awk '{print $11}' | sed 's|.*/||' | cut -c1-20)
-    pid=$(echo "$pline" | awk '{print $2}')
+    proc=$(echo "$proc" | cut -c1-20)
 
     if [ "$cpu_int" -gt 50 ]; then
         color=$RED
