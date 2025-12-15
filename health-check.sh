@@ -180,22 +180,67 @@ done
 echo ""
 line
 
-# ============ COMMON ISSUES ============
+# ============ PROCESS ANALYSIS ============
 echo ""
-printf "  ${BOLD}${WHITE}🔍 COMMON ISSUE CHECK${NC}\n"
+printf "  ${BOLD}${WHITE}🔍 PROCESS ANALYSIS${NC}\n"
 echo ""
 
 issues_found=0
 
-# Check DisplaysExt
+# Function to get process runtime
+get_runtime() {
+    local pid=$1
+    local etime=$(ps -o etime= -p "$pid" 2>/dev/null | xargs)
+    if [ -n "$etime" ]; then
+        echo "$etime"
+    else
+        echo "unknown"
+    fi
+}
+
+# ---- System Processes ----
+printf "     ${DIM}── System Processes ──${NC}\n"
+
+# kernel_task - Thermal management (can't be killed)
+KERNEL_CPU=$(ps aux | grep -E "kernel_task" | grep -v grep | awk '{print $3}' | head -1)
+if [ -n "$KERNEL_CPU" ]; then
+    KERNEL_INT=${KERNEL_CPU%%.*}
+    if [ "$KERNEL_INT" -gt 50 ]; then
+        printf "     ${WARN} ${YELLOW}kernel_task${NC} using ${BOLD}${KERNEL_CPU}%%${NC} CPU\n"
+        printf "        ${DIM}${ARROW} Thermal throttling - your Mac is running hot${NC}\n"
+        printf "        ${DIM}${ARROW} Tip: Check ventilation, close heavy apps, use a cooling pad${NC}\n"
+        issues_found=$((issues_found + 1))
+    else
+        printf "     ${CHECK} ${GREEN}kernel_task${NC} ${DIM}(${KERNEL_CPU}%% - normal)${NC}\n"
+    fi
+fi
+
+# WindowServer - Graphics compositor
+WINDOW_CPU=$(ps aux | grep -E "WindowServer" | grep -v grep | awk '{print $3}' | head -1)
+if [ -n "$WINDOW_CPU" ]; then
+    WINDOW_INT=${WINDOW_CPU%%.*}
+    if [ "$WINDOW_INT" -gt 30 ]; then
+        WINDOW_PID=$(ps aux | grep -E "WindowServer" | grep -v grep | awk '{print $2}' | head -1)
+        runtime=$(get_runtime "$WINDOW_PID")
+        printf "     ${WARN} ${YELLOW}WindowServer${NC} using ${BOLD}${WINDOW_CPU}%%${NC} CPU ${DIM}(running: ${runtime})${NC}\n"
+        printf "        ${DIM}${ARROW} Graphics compositor - lots of screen activity${NC}\n"
+        printf "        ${DIM}${ARROW} Tip: Close windows, reduce transparency in Accessibility settings${NC}\n"
+        issues_found=$((issues_found + 1))
+    else
+        printf "     ${CHECK} ${GREEN}WindowServer${NC} ${DIM}(${WINDOW_CPU}%% - normal)${NC}\n"
+    fi
+fi
+
+# DisplaysExt - Known macOS bug
 DISPLAYS_CPU=$(ps aux | grep DisplaysExt | grep -v grep | awk '{print $3}' | head -1)
 DISPLAYS_PID=$(ps aux | grep DisplaysExt | grep -v grep | awk '{print $2}' | head -1)
 if [ -n "$DISPLAYS_CPU" ]; then
-    DISPLAYS_INT=$(echo $DISPLAYS_CPU | cut -d. -f1)
+    DISPLAYS_INT=${DISPLAYS_CPU%%.*}
     if [ "$DISPLAYS_INT" -gt 50 ]; then
-        printf "     ${CROSS} ${RED}Display Driver${NC} using ${BOLD}${DISPLAYS_CPU}%%${NC} CPU\n"
-        printf "        ${DIM}${ARROW} This is a known macOS bug${NC}\n"
-        add_issue "DisplaysExt high CPU (${DISPLAYS_CPU}%)" "Kill DisplaysExt process (it will restart automatically)" "sudo killall DisplaysExt 2>/dev/null && echo 'DisplaysExt restarted'"
+        runtime=$(get_runtime "$DISPLAYS_PID")
+        printf "     ${CROSS} ${RED}Display Driver${NC} using ${BOLD}${DISPLAYS_CPU}%%${NC} CPU ${DIM}(running: ${runtime})${NC}\n"
+        printf "        ${DIM}${ARROW} Known macOS bug with external displays${NC}\n"
+        add_issue "DisplaysExt high CPU (${DISPLAYS_CPU}%)" "Kill DisplaysExt (auto-restarts)" "sudo killall DisplaysExt 2>/dev/null && echo 'DisplaysExt restarted'"
         issues_found=$((issues_found + 1))
     else
         printf "     ${CHECK} ${GREEN}Display Driver${NC} ${DIM}(${DISPLAYS_CPU}%% - normal)${NC}\n"
@@ -204,49 +249,96 @@ else
     printf "     ${CHECK} ${GREEN}Display Driver${NC} ${DIM}(idle)${NC}\n"
 fi
 
-# Check Spotlight
-SPOTLIGHT_CPU=$(ps aux | grep corespotlightd | grep -v grep | awk '{print $3}' | head -1)
-if [ -n "$SPOTLIGHT_CPU" ]; then
-    SPOTLIGHT_INT=$(echo $SPOTLIGHT_CPU | cut -d. -f1)
-    if [ "$SPOTLIGHT_INT" -gt 30 ]; then
-        printf "     ${WARN} ${YELLOW}Spotlight Search${NC} indexing ${DIM}(${SPOTLIGHT_CPU}%%)${NC}\n"
-        printf "        ${DIM}${ARROW} Spotlight is organizing your files${NC}\n"
-        add_issue "Spotlight using ${SPOTLIGHT_CPU}% CPU" "Rebuild Spotlight index (fixes stuck indexing)" "sudo mdutil -E / && echo 'Spotlight index rebuilding in background - this may take a while but search will keep working'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Spotlight Search${NC} ${DIM}(${SPOTLIGHT_CPU}%% - normal)${NC}\n"
-    fi
+# Spotlight processes (corespotlightd, mds, mds_stores, mdworker)
+SPOTLIGHT_TOTAL=$(ps aux | grep -E "(corespotlightd|mds_stores|mdworker)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+SPOTLIGHT_INT=${SPOTLIGHT_TOTAL%%.*}
+if [ "$SPOTLIGHT_INT" -gt 30 ]; then
+    printf "     ${WARN} ${YELLOW}Spotlight${NC} indexing ${DIM}(${SPOTLIGHT_TOTAL}%% total)${NC}\n"
+    printf "        ${DIM}${ARROW} Indexing files - common after updates or new files${NC}\n"
+    add_issue "Spotlight using ${SPOTLIGHT_TOTAL}% CPU" "Rebuild Spotlight index" "sudo mdutil -E / && echo 'Spotlight rebuilding - may take a while'"
+    issues_found=$((issues_found + 1))
 else
-    printf "     ${CHECK} ${GREEN}Spotlight Search${NC} ${DIM}(idle)${NC}\n"
+    printf "     ${CHECK} ${GREEN}Spotlight${NC} ${DIM}(${SPOTLIGHT_TOTAL}%% - normal)${NC}\n"
 fi
+
+# Time Machine (backupd)
+BACKUP_CPU=$(ps aux | grep -E "[b]ackupd" | awk '{print $3}' | head -1)
+if [ -n "$BACKUP_CPU" ]; then
+    BACKUP_INT=${BACKUP_CPU%%.*}
+    if [ "$BACKUP_INT" -gt 20 ]; then
+        BACKUP_PID=$(ps aux | grep -E "[b]ackupd" | awk '{print $2}' | head -1)
+        runtime=$(get_runtime "$BACKUP_PID")
+        printf "     ${WARN} ${YELLOW}Time Machine${NC} backing up ${DIM}(${BACKUP_CPU}%%, running: ${runtime})${NC}\n"
+        printf "        ${DIM}${ARROW} Backup in progress - will complete automatically${NC}\n"
+        issues_found=$((issues_found + 1))
+    fi
+fi
+
+# Photos (photolibraryd, photoanalysisd)
+PHOTOS_TOTAL=$(ps aux | grep -E "(photolibraryd|photoanalysisd)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+PHOTOS_INT=${PHOTOS_TOTAL%%.*}
+if [ "$PHOTOS_INT" -gt 30 ]; then
+    printf "     ${WARN} ${YELLOW}Photos${NC} analyzing ${DIM}(${PHOTOS_TOTAL}%% total)${NC}\n"
+    printf "        ${DIM}${ARROW} Processing faces/objects after importing photos${NC}\n"
+    add_issue "Photos using ${PHOTOS_TOTAL}% CPU" "Quit Photos to pause" "osascript -e 'quit app \"Photos\"' 2>/dev/null && echo 'Photos closed'"
+    issues_found=$((issues_found + 1))
+elif [ "$PHOTOS_INT" -gt 5 ]; then
+    printf "     ${CHECK} ${GREEN}Photos${NC} ${DIM}(${PHOTOS_TOTAL}%% - normal)${NC}\n"
+fi
+
+# iCloud (cloudd, bird, nsurlsessiond)
+ICLOUD_TOTAL=$(ps aux | grep -E "(cloudd|bird)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+ICLOUD_INT=${ICLOUD_TOTAL%%.*}
+if [ "$ICLOUD_INT" -gt 30 ]; then
+    printf "     ${WARN} ${YELLOW}iCloud${NC} syncing ${DIM}(${ICLOUD_TOTAL}%% total)${NC}\n"
+    printf "        ${DIM}${ARROW} Syncing files - check iCloud Drive status in Finder${NC}\n"
+    issues_found=$((issues_found + 1))
+elif [ "$ICLOUD_INT" -gt 5 ]; then
+    printf "     ${CHECK} ${GREEN}iCloud${NC} ${DIM}(${ICLOUD_TOTAL}%% - normal)${NC}\n"
+fi
+
+# Software Update (softwareupdated)
+UPDATE_CPU=$(ps aux | grep -E "[s]oftwareupdated" | awk '{print $3}' | head -1)
+if [ -n "$UPDATE_CPU" ]; then
+    UPDATE_INT=${UPDATE_CPU%%.*}
+    if [ "$UPDATE_INT" -gt 20 ]; then
+        printf "     ${WARN} ${YELLOW}Software Update${NC} checking ${DIM}(${UPDATE_CPU}%%)${NC}\n"
+        printf "        ${DIM}${ARROW} Checking for or downloading macOS updates${NC}\n"
+        issues_found=$((issues_found + 1))
+    fi
+fi
+
+# ---- Browsers ----
+echo ""
+printf "     ${DIM}── Browsers ──${NC}\n"
 
 # Check Brave Browser
 BRAVE_COUNT=$(ps aux | grep -i "[B]rave" | wc -l | xargs)
 BRAVE_TOTAL_CPU=$(ps aux | grep -i "[B]rave" | awk '{sum += $3} END {print sum+0}')
 if [ "$BRAVE_COUNT" -gt 0 ] && [ -n "$BRAVE_TOTAL_CPU" ]; then
-    BRAVE_INT=$(echo $BRAVE_TOTAL_CPU | cut -d. -f1)
+    BRAVE_INT=${BRAVE_TOTAL_CPU%%.*}
     if [ "$BRAVE_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Brave Browser${NC} using ${BOLD}${BRAVE_TOTAL_CPU}%%${NC} ${DIM}(${BRAVE_COUNT} processes)${NC}\n"
+        printf "     ${WARN} ${YELLOW}Brave${NC} using ${BOLD}${BRAVE_TOTAL_CPU}%%${NC} ${DIM}(${BRAVE_COUNT} processes)${NC}\n"
         printf "        ${DIM}${ARROW} Too many tabs or heavy websites${NC}\n"
-        add_issue "Brave Browser using ${BRAVE_TOTAL_CPU}% CPU" "Force quit Brave Browser" "osascript -e 'quit app \"Brave Browser\"' && echo 'Brave Browser closed'"
+        add_issue "Brave using ${BRAVE_TOTAL_CPU}% CPU" "Quit Brave Browser" "osascript -e 'quit app \"Brave Browser\"' && echo 'Brave closed'"
         issues_found=$((issues_found + 1))
     else
-        printf "     ${CHECK} ${GREEN}Brave Browser${NC} ${DIM}(${BRAVE_TOTAL_CPU}%% across ${BRAVE_COUNT} processes)${NC}\n"
+        printf "     ${CHECK} ${GREEN}Brave${NC} ${DIM}(${BRAVE_TOTAL_CPU}%% across ${BRAVE_COUNT} tabs)${NC}\n"
     fi
 fi
 
 # Check Chrome
-CHROME_COUNT=$(ps aux | grep -i "[C]hrome" | wc -l | xargs)
-CHROME_TOTAL_CPU=$(ps aux | grep -i "[C]hrome" | awk '{sum += $3} END {print sum+0}')
+CHROME_COUNT=$(ps aux | grep -i "[G]oogle Chrome" | wc -l | xargs)
+CHROME_TOTAL_CPU=$(ps aux | grep -i "[G]oogle Chrome" | awk '{sum += $3} END {print sum+0}')
 if [ "$CHROME_COUNT" -gt 0 ] && [ -n "$CHROME_TOTAL_CPU" ]; then
-    CHROME_INT=$(echo $CHROME_TOTAL_CPU | cut -d. -f1)
+    CHROME_INT=${CHROME_TOTAL_CPU%%.*}
     if [ "$CHROME_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Chrome Browser${NC} using ${BOLD}${CHROME_TOTAL_CPU}%%${NC} ${DIM}(${CHROME_COUNT} processes)${NC}\n"
-        printf "        ${DIM}${ARROW} Too many tabs or heavy websites${NC}\n"
-        add_issue "Chrome Browser using ${CHROME_TOTAL_CPU}% CPU" "Force quit Chrome Browser" "osascript -e 'quit app \"Google Chrome\"' && echo 'Chrome closed'"
+        printf "     ${WARN} ${YELLOW}Chrome${NC} using ${BOLD}${CHROME_TOTAL_CPU}%%${NC} ${DIM}(${CHROME_COUNT} processes)${NC}\n"
+        printf "        ${DIM}${ARROW} Too many tabs or extensions${NC}\n"
+        add_issue "Chrome using ${CHROME_TOTAL_CPU}% CPU" "Quit Chrome" "osascript -e 'quit app \"Google Chrome\"' && echo 'Chrome closed'"
         issues_found=$((issues_found + 1))
     else
-        printf "     ${CHECK} ${GREEN}Chrome Browser${NC} ${DIM}(${CHROME_TOTAL_CPU}%% across ${CHROME_COUNT} processes)${NC}\n"
+        printf "     ${CHECK} ${GREEN}Chrome${NC} ${DIM}(${CHROME_TOTAL_CPU}%% across ${CHROME_COUNT} tabs)${NC}\n"
     fi
 fi
 
@@ -254,14 +346,114 @@ fi
 SAFARI_COUNT=$(ps aux | grep -i "[S]afari" | grep -v "SafariServices" | wc -l | xargs)
 SAFARI_TOTAL_CPU=$(ps aux | grep -i "[S]afari" | grep -v "SafariServices" | awk '{sum += $3} END {print sum+0}')
 if [ "$SAFARI_COUNT" -gt 0 ] && [ -n "$SAFARI_TOTAL_CPU" ]; then
-    SAFARI_INT=$(echo $SAFARI_TOTAL_CPU | cut -d. -f1)
+    SAFARI_INT=${SAFARI_TOTAL_CPU%%.*}
     if [ "$SAFARI_INT" -gt 100 ]; then
         printf "     ${WARN} ${YELLOW}Safari${NC} using ${BOLD}${SAFARI_TOTAL_CPU}%%${NC} ${DIM}(${SAFARI_COUNT} processes)${NC}\n"
-        add_issue "Safari using ${SAFARI_TOTAL_CPU}% CPU" "Force quit Safari" "osascript -e 'quit app \"Safari\"' && echo 'Safari closed'"
+        printf "        ${DIM}${ARROW} Heavy websites or too many tabs${NC}\n"
+        add_issue "Safari using ${SAFARI_TOTAL_CPU}% CPU" "Quit Safari" "osascript -e 'quit app \"Safari\"' && echo 'Safari closed'"
         issues_found=$((issues_found + 1))
     else
-        printf "     ${CHECK} ${GREEN}Safari${NC} ${DIM}(${SAFARI_TOTAL_CPU}%% across ${SAFARI_COUNT} processes)${NC}\n"
+        printf "     ${CHECK} ${GREEN}Safari${NC} ${DIM}(${SAFARI_TOTAL_CPU}%% across ${SAFARI_COUNT} tabs)${NC}\n"
     fi
+fi
+
+# Check Firefox
+FIREFOX_COUNT=$(ps aux | grep -i "[f]irefox" | wc -l | xargs)
+FIREFOX_TOTAL_CPU=$(ps aux | grep -i "[f]irefox" | awk '{sum += $3} END {print sum+0}')
+if [ "$FIREFOX_COUNT" -gt 0 ] && [ -n "$FIREFOX_TOTAL_CPU" ]; then
+    FIREFOX_INT=${FIREFOX_TOTAL_CPU%%.*}
+    if [ "$FIREFOX_INT" -gt 100 ]; then
+        printf "     ${WARN} ${YELLOW}Firefox${NC} using ${BOLD}${FIREFOX_TOTAL_CPU}%%${NC} ${DIM}(${FIREFOX_COUNT} processes)${NC}\n"
+        printf "        ${DIM}${ARROW} Too many tabs or heavy websites${NC}\n"
+        add_issue "Firefox using ${FIREFOX_TOTAL_CPU}% CPU" "Quit Firefox" "osascript -e 'quit app \"Firefox\"' && echo 'Firefox closed'"
+        issues_found=$((issues_found + 1))
+    else
+        printf "     ${CHECK} ${GREEN}Firefox${NC} ${DIM}(${FIREFOX_TOTAL_CPU}%% across ${FIREFOX_COUNT} tabs)${NC}\n"
+    fi
+fi
+
+# ---- High CPU Process Detection ----
+echo ""
+printf "     ${DIM}── Other High CPU Processes ──${NC}\n"
+
+# Known processes we already checked (to avoid duplicates)
+KNOWN_PROCS="kernel_task|WindowServer|DisplaysExt|corespotlightd|mds|mdworker|mds_stores|backupd|photolibraryd|photoanalysisd|cloudd|bird|softwareupdated|Brave|Chrome|Safari|Firefox|Google|healthcheck"
+
+# Find any process using >50% CPU that we haven't already checked
+HIGH_CPU_FOUND=0
+while IFS= read -r proc_line; do
+    [ -z "$proc_line" ] && continue
+
+    cpu=$(echo "$proc_line" | awk '{print $1}')
+    pid=$(echo "$proc_line" | awk '{print $2}')
+    proc=$(echo "$proc_line" | awk '{print $3}')
+
+    # Skip if not numeric
+    case "$cpu" in
+        [0-9]*) ;;
+        *) continue ;;
+    esac
+
+    cpu_int=${cpu%%.*}
+
+    # Skip if not high CPU (>50%)
+    [ "$cpu_int" -lt 50 ] && continue
+
+    # Skip known processes
+    if echo "$proc" | grep -qE "$KNOWN_PROCS"; then
+        continue
+    fi
+
+    HIGH_CPU_FOUND=1
+    runtime=$(get_runtime "$pid")
+
+    printf "     ${CROSS} ${RED}${proc}${NC} using ${BOLD}${cpu}%%${NC} CPU ${DIM}(PID: ${pid}, running: ${runtime})${NC}\n"
+
+    # Identify common process types
+    case "$proc" in
+        *node*|*npm*|*yarn*)
+            printf "        ${DIM}${ARROW} Node.js process - possibly a dev server or build${NC}\n"
+            ;;
+        *python*|*Python*)
+            printf "        ${DIM}${ARROW} Python script running${NC}\n"
+            ;;
+        *ruby*|*Ruby*)
+            printf "        ${DIM}${ARROW} Ruby process${NC}\n"
+            ;;
+        *java*|*Java*)
+            printf "        ${DIM}${ARROW} Java application${NC}\n"
+            ;;
+        *Electron*|*Helper*)
+            printf "        ${DIM}${ARROW} Electron app helper (VS Code, Slack, Discord, etc.)${NC}\n"
+            ;;
+        *Xcode*|*SourceKit*|*clang*)
+            printf "        ${DIM}${ARROW} Xcode/compiler process - building code${NC}\n"
+            ;;
+        *docker*|*Docker*)
+            printf "        ${DIM}${ARROW} Docker container or daemon${NC}\n"
+            ;;
+        *Teams*|*Slack*|*Discord*|*Zoom*)
+            printf "        ${DIM}${ARROW} Communication app - try closing if not in use${NC}\n"
+            ;;
+        *Figma*|*Sketch*|*Photoshop*|*Illustrator*)
+            printf "        ${DIM}${ARROW} Design app - heavy graphics processing${NC}\n"
+            ;;
+        *)
+            full_path=$(ps -o command= -p "$pid" 2>/dev/null | head -c 60)
+            if [ -n "$full_path" ]; then
+                printf "        ${DIM}${ARROW} ${full_path}...${NC}\n"
+            fi
+            ;;
+    esac
+
+    # Add fix option to kill the process
+    add_issue "${proc} using ${cpu}% CPU (PID: ${pid})" "Kill ${proc} process" "kill ${pid} 2>/dev/null && echo '${proc} terminated' || echo 'Process already ended or requires sudo'"
+    issues_found=$((issues_found + 1))
+
+done < <(ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -20)
+
+if [ "$HIGH_CPU_FOUND" -eq 0 ]; then
+    printf "     ${CHECK} ${GREEN}No other high-CPU processes detected${NC}\n"
 fi
 
 echo ""

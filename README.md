@@ -57,11 +57,22 @@ That's it! No installation required.
 
 ──────────────────────────────────────────────────────────────────────
 
-  🔍 COMMON ISSUE CHECK
+  🔍 PROCESS ANALYSIS
 
+     ── System Processes ──
+     ✓ kernel_task (2.1% - normal)
+     ✓ WindowServer (4.5% - normal)
      ✓ Display Driver (idle)
-     ✓ Spotlight Search (idle)
-     ✓ Brave Browser (12.5% across 8 processes)
+     ✓ Spotlight (0% - normal)
+     ✓ Photos (1.2% - normal)
+     ✓ iCloud (0.5% - normal)
+
+     ── Browsers ──
+     ✓ Safari (12.5% across 4 tabs)
+     ✓ Chrome (8.2% across 6 tabs)
+
+     ── Other High CPU Processes ──
+     ✓ No other high-CPU processes detected
 
 ──────────────────────────────────────────────────────────────────────
 
@@ -98,14 +109,34 @@ That's it! No installation required.
 
 ## 🎯 What It Detects
 
+### System Processes
+| Process | Threshold | Explanation | Fix Available |
+|---------|-----------|-------------|---------------|
+| **kernel_task** | > 50% CPU | Thermal throttling - Mac is hot | No (tip: improve ventilation) |
+| **WindowServer** | > 30% CPU | Graphics compositor overload | No (tip: reduce transparency) |
+| **DisplaysExt** | > 50% CPU | Known macOS display driver bug | Yes (auto-restarts) |
+| **Spotlight** | > 30% CPU | Indexing files | Yes (rebuild index) |
+| **Time Machine** | > 20% CPU | Backup in progress | No (wait for completion) |
+| **Photos** | > 30% CPU | Analyzing faces/objects | Yes (quit Photos) |
+| **iCloud** | > 30% CPU | Syncing files | No (check iCloud status) |
+| **Software Update** | > 20% CPU | Checking/downloading updates | No (wait for completion) |
+
+### Browsers
+| Browser | Threshold | Fix |
+|---------|-----------|-----|
+| **Brave/Chrome/Safari/Firefox** | > 100% total CPU | Quit browser |
+
+### Any Other Process
+- Detects ANY process using > 50% CPU
+- Shows process name, PID, and runtime
+- Identifies common types (Node.js, Python, Docker, Electron apps, etc.)
+- Offers to kill the process
+
+### Resources
 | Issue | Detection | Tip |
 |-------|-----------|-----|
-| **High CPU Load** | Load > CPU cores | Shows which processes are responsible |
-| **DisplaysExt Bug** | > 50% CPU | Common macOS display driver issue |
-| **Spotlight Indexing** | > 30% CPU | Usually temporary after updates |
-| **Browser Memory Hog** | > 100% CPU | Suggests closing tabs |
-| **Low Memory** | > 85% used | Shows breakdown of memory usage |
-| **Low Disk Space** | > 75% used | Warns before you run out |
+| **Low Memory** | > 85% used | Purge inactive memory |
+| **Low Disk Space** | > 75% used | Shows cleanup options with sizes |
 
 ## 🏆 Health Grades
 
