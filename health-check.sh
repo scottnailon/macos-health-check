@@ -153,14 +153,15 @@ echo ""
 printf "  ${BOLD}${WHITE}🔥 TOP CPU CONSUMERS${NC}\n"
 echo ""
 
-# Use macOS native CPU sorting (-r flag) with headerless output (= suffix)
-ps -arcwwxo '%cpu=,pid=,comm=' 2>/dev/null | head -5 | while read -r cpu pid proc; do
-    # Skip if cpu is empty or not a number
+# v2: Use macOS native CPU sorting, skip header explicitly, validate numeric
+ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -5 | while read -r cpu pid proc; do
+    # Skip if cpu is empty or not starting with a digit
     case "$cpu" in
-        ''|*[!0-9.]*) continue ;;
+        [0-9]*) ;;
+        *) continue ;;
     esac
 
-    cpu_int=$(echo "$cpu" | cut -d. -f1)
+    cpu_int=${cpu%%.*}
     proc=$(echo "$proc" | cut -c1-20)
 
     if [ "$cpu_int" -gt 50 ]; then
