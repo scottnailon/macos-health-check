@@ -137,13 +137,34 @@ chmod +x ~/healthcheck.sh
 ~/healthcheck.sh
 ```
 
-## 🔒 Privacy
+## 🔒 Privacy & Security
 
 This script:
 - ✅ Runs entirely on your Mac
 - ✅ Sends no data anywhere
 - ✅ Uses only standard macOS commands
 - ✅ Is fully open source
+
+### ⚠️ Security Notes
+
+**Auto-fix operations** - Some fixes are **destructive** and cannot be undone:
+- **Empty Trash** - Permanently deletes all files in Trash
+- **Clear cache files** - Removes cached data (apps will rebuild as needed)
+- **Clear system logs** - Requires `sudo` (your password)
+- **Docker prune** - Removes unused Docker images/containers
+
+**Password prompts** - Operations marked "requires password" will prompt for your macOS admin password via `sudo`.
+
+### 🔍 Verify Before Running
+
+For security-conscious users, review the script before running:
+
+```bash
+# Download and review first
+curl -sL https://raw.githubusercontent.com/scottnailon/macos-health-check/main/health-check.sh -o /tmp/healthcheck.sh
+less /tmp/healthcheck.sh  # Review the code
+bash /tmp/healthcheck.sh  # Run after reviewing
+```
 
 ## 📄 License
 

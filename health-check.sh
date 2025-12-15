@@ -352,19 +352,25 @@ if [ "$disk_percent" -gt 90 ]; then
     disk_status="${CROSS} ${RED}Storage is almost full!${NC}"
     disk_tip="${DIM}${ARROW} Free up space by emptying Trash and removing unused apps${NC}"
     # Add multiple storage cleanup options
-    add_issue "Storage ${disk_percent}% full (only ${disk_avail} free)" "Empty Trash" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
-    add_issue "Storage cleanup" "Clear user cache files" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
+    # Calculate sizes first for user awareness
+    trash_size=$(du -sh ~/.Trash 2>/dev/null | awk '{print $1}' || echo "unknown")
+    cache_size=$(du -sh ~/Library/Caches 2>/dev/null | awk '{print $1}' || echo "unknown")
+    add_issue "Storage ${disk_percent}% full (only ${disk_avail} free)" "Empty Trash (~${trash_size})" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
+    add_issue "Storage cleanup" "Clear user cache files (~${cache_size})" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
     add_issue "Storage cleanup" "Clear system logs (requires password)" "sudo rm -rf /private/var/log/asl/*.asl 2>/dev/null && sudo rm -rf /Library/Logs/* 2>/dev/null && echo 'System logs cleared'"
     add_issue "Storage cleanup" "Clear Xcode derived data (if installed)" "rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null && echo 'Xcode derived data cleared'"
-    add_issue "Storage cleanup" "Clear iOS device backups" "rm -rf ~/Library/Application\\ Support/MobileSync/Backup/* 2>/dev/null && echo 'iOS backups cleared'"
+    # NOTE: iOS backups intentionally NOT included - too risky to delete phone backups
     add_issue "Storage cleanup" "Clear Docker unused data (if installed)" "docker system prune -af 2>/dev/null && echo 'Docker cleaned' || echo 'Docker not installed'"
     add_issue "Storage cleanup" "Show large files in Downloads" "echo 'Large files in Downloads:' && find ~/Downloads -type f -size +100M -exec ls -lh {} \\; 2>/dev/null | awk '{print \$5, \$9}' | head -10"
 elif [ "$disk_percent" -gt 75 ]; then
     disk_color=$YELLOW
     disk_status="${WARN} ${YELLOW}Storage is getting full${NC}"
     disk_tip="${DIM}${ARROW} Consider cleaning up old files soon${NC}"
-    add_issue "Storage ${disk_percent}% full" "Empty Trash" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
-    add_issue "Storage cleanup" "Clear user cache files" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
+    # Calculate sizes for user awareness
+    trash_size=$(du -sh ~/.Trash 2>/dev/null | awk '{print $1}' || echo "unknown")
+    cache_size=$(du -sh ~/Library/Caches 2>/dev/null | awk '{print $1}' || echo "unknown")
+    add_issue "Storage ${disk_percent}% full" "Empty Trash (~${trash_size})" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
+    add_issue "Storage cleanup" "Clear user cache files (~${cache_size})" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
 else
     disk_color=$GREEN
     disk_status="${CHECK} ${GREEN}Plenty of storage available${NC}"
