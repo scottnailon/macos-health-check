@@ -1,53 +1,154 @@
-# macOS Health Check
+# 🖥 macOS Health Check
 
-A simple bash script to quickly check your Mac's system health, including CPU usage, memory status, and disk space.
+A beautiful, user-friendly system health monitor for your Mac. Get an instant overview of your system's performance with colorful visuals and an easy-to-understand health grade.
 
-## Quick Run (One-liner)
+![Made for macOS](https://img.shields.io/badge/Made%20for-macOS-blue?style=flat-square&logo=apple)
+![Bash](https://img.shields.io/badge/Bash-Script-green?style=flat-square&logo=gnu-bash)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
+
+## ✨ Features
+
+- 📊 **System Load** - Visual load meter with status indicator
+- 🔥 **Top Processes** - See what's consuming your CPU
+- 🔍 **Issue Detection** - Automatically checks for common problems
+- 🧠 **Memory Status** - RAM usage with detailed breakdown
+- 💾 **Storage Check** - Disk space with warnings
+- 📋 **Health Grade** - Overall A-F grade for your system
+
+## 🚀 Quick Run
+
+Open Terminal and paste:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/scottnailon/macos-health-check/main/health-check.sh | bash
 ```
 
-## What It Checks
+That's it! No installation required.
 
-- **System Load**: Warns if load average exceeds 10
-- **Top CPU Processes**: Shows the top 10 CPU-consuming processes
-- **Problematic Processes**:
-  - DisplaysExt (common macOS display issue)
-  - Spotlight indexing (corespotlightd)
-  - Brave Browser (total CPU across all processes)
-- **Memory Status**: Active, inactive, wired, and free memory
-- **Disk Space**: Usage on root volume
-
-## Sample Output
+## 📸 Screenshot
 
 ```
-=== System Health Check ===
-Date: Mon Dec 15 10:30:00 AEDT 2025
+══════════════════════════════════════════════════════════════════════
 
-Top 10 CPU-consuming processes:
-================================
-/usr/bin/python3     12.5%  PID: 1234    scott
-...
+                        🖥  macOS Health Check
+                       System Performance Monitor
 
-Checking for known problematic processes:
-==========================================
-✓  DisplaysExt: not running or minimal CPU
-✓  Spotlight: 2.1% CPU (normal)
-✓  Brave Browser: 45.2% total CPU across 12 processes
+══════════════════════════════════════════════════════════════════════
 
-=== Memory Status ===
-free:                    1024.00 Mi
-active:                  8192.00 Mi
-inactive:                4096.00 Mi
-wired:                   2048.00 Mi
+  📅 Monday, December 15 2025 at 10:30 AM
+  💻 macOS 15.1
 
-=== Disk Space ===
-Used: 250Gi / 500Gi (50%)
+──────────────────────────────────────────────────────────────────────
 
-Health check complete.
+  📊 SYSTEM LOAD
+
+     ✓ Low load - your Mac is relaxed
+
+     Load: 1.25 (8 CPU cores available)
+     [████░░░░░░░░░░░░░░░░░░░░░░░░░░] 15%
+
+──────────────────────────────────────────────────────────────────────
+
+  🔥 TOP CPU CONSUMERS
+
+     🟢   2.1%  Safari               PID: 1234
+     🟢   1.8%  Terminal             PID: 5678
+     🟢   1.2%  Finder               PID: 9012
+
+──────────────────────────────────────────────────────────────────────
+
+  🔍 COMMON ISSUE CHECK
+
+     ✓ Display Driver (idle)
+     ✓ Spotlight Search (idle)
+     ✓ Brave Browser (12.5% across 8 processes)
+
+──────────────────────────────────────────────────────────────────────
+
+  🧠 MEMORY STATUS
+
+     ✓ Plenty of memory available
+
+     Used: 8.2GB / 16.0GB
+     [████████████████░░░░░░░░░░░░░░] 51%
+
+     Active: 6.1GB  •  Wired: 2.1GB  •  Free: 4.2GB
+
+──────────────────────────────────────────────────────────────────────
+
+  💾 STORAGE
+
+     ✓ Plenty of storage available
+
+     Used: 234Gi / 500Gi
+     [██████████████░░░░░░░░░░░░░░░░] 47%
+
+──────────────────────────────────────────────────────────────────────
+
+  📋 OVERALL HEALTH
+
+     🌟  Grade: A  (Score: 100/100)
+     Excellent! Your Mac is running great!
+
+══════════════════════════════════════════════════════════════════════
+
+            Powered by github.com/scottnailon/macos-health-check
+
 ```
 
-## License
+## 🎯 What It Detects
 
-MIT
+| Issue | Detection | Tip |
+|-------|-----------|-----|
+| **High CPU Load** | Load > CPU cores | Shows which processes are responsible |
+| **DisplaysExt Bug** | > 50% CPU | Common macOS display driver issue |
+| **Spotlight Indexing** | > 30% CPU | Usually temporary after updates |
+| **Browser Memory Hog** | > 100% CPU | Suggests closing tabs |
+| **Low Memory** | > 85% used | Shows breakdown of memory usage |
+| **Low Disk Space** | > 75% used | Warns before you run out |
+
+## 🏆 Health Grades
+
+| Grade | Score | Meaning |
+|-------|-------|---------|
+| 🌟 **A** | 90-100 | Excellent! Your Mac is running great! |
+| 👍 **B** | 80-89 | Good! Your Mac is healthy. |
+| 👌 **C** | 70-79 | Fair. Some areas could use attention. |
+| ⚡ **D** | 60-69 | Needs attention. Check the issues above. |
+| 🔧 **F** | 0-59 | Critical! Your Mac needs some care. |
+
+## 💡 Pro Tips
+
+### Create an alias for quick access:
+
+Add this to your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+alias healthcheck='curl -sL https://raw.githubusercontent.com/scottnailon/macos-health-check/main/health-check.sh | bash'
+```
+
+Then just type `healthcheck` anytime!
+
+### Download for offline use:
+
+```bash
+curl -sL https://raw.githubusercontent.com/scottnailon/macos-health-check/main/health-check.sh -o ~/healthcheck.sh
+chmod +x ~/healthcheck.sh
+~/healthcheck.sh
+```
+
+## 🔒 Privacy
+
+This script:
+- ✅ Runs entirely on your Mac
+- ✅ Sends no data anywhere
+- ✅ Uses only standard macOS commands
+- ✅ Is fully open source
+
+## 📄 License
+
+MIT License - feel free to use, modify, and share!
+
+---
+
+Made with ❤️ by [Scott Nailon](https://github.com/scottnailon)
