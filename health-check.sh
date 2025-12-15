@@ -153,7 +153,7 @@ echo ""
 printf "  ${BOLD}${WHITE}🔥 TOP CPU CONSUMERS${NC}\n"
 echo ""
 
-ps aux | tail -n +2 | sort -rk 3 | head -5 | while read -r pline; do
+ps aux | awk 'NR>1 && $3~/^[0-9]/ {print}' | sort -k3 -rn | head -5 | while read -r pline; do
     cpu=$(echo "$pline" | awk '{print $3}')
     cpu_int=$(echo "$cpu" | cut -d. -f1)
     proc=$(echo "$pline" | awk '{print $11}' | sed 's|.*/||' | cut -c1-20)
