@@ -66,11 +66,12 @@ double_line() {
 }
 
 # Function to ask yes/no
+# Uses /dev/tty to read input directly from terminal (works with curl | bash)
 ask_yes_no() {
     local prompt="$1"
     local response
     printf "${BOLD}${prompt}${NC} ${DIM}(y/n)${NC} "
-    read -r response
+    read -r response < /dev/tty
     case "$response" in
         [yY]|[yY][eE][sS]) return 0 ;;
         *) return 1 ;;
@@ -676,7 +677,7 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
         printf "     ${CYAN}q${NC} = Quit without fixing\n"
         echo ""
         printf "  ${BOLD}Enter your choice:${NC} "
-        read -r choice
+        read -r choice < /dev/tty
 
         echo ""
         line
