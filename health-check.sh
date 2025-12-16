@@ -664,8 +664,8 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
         echo ""
 
         for i in "${!ISSUES[@]}"; do
-            printf "  ${BOLD}${CYAN}[$((i + 1))]${NC} ${ISSUES[$i]}\n"
-            printf "      ${DIM}Fix: ${FIX_DESCRIPTIONS[$i]}${NC}\n"
+            printf "  ${BOLD}${CYAN}[$((i + 1))]${NC} %s\n" "${ISSUES[$i]}"
+            printf "      ${DIM}Fix: %s${NC}\n" "${FIX_DESCRIPTIONS[$i]}"
             echo ""
         done
 
@@ -687,18 +687,18 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
             [aA])
                 printf "  ${BOLD}${CYAN}Fixing all issues...${NC}\n\n"
                 for i in "${!ISSUES[@]}"; do
-                    printf "  ${ARROW} ${FIX_DESCRIPTIONS[$i]}...\n"
+                    printf "  ${ARROW} %s...\n" "${FIX_DESCRIPTIONS[$i]}"
                     result=$(eval "${FIX_COMMANDS[$i]}" 2>&1)
                     if [ $? -eq 0 ]; then
                         printf "     ${CHECK} ${GREEN}Done${NC}"
                         if [ -n "$result" ]; then
-                            printf " - ${DIM}$result${NC}"
+                            printf " - ${DIM}%s${NC}" "$result"
                         fi
                         printf "\n"
                     else
                         printf "     ${CROSS} ${RED}Failed${NC}"
                         if [ -n "$result" ]; then
-                            printf " - ${DIM}$result${NC}"
+                            printf " - ${DIM}%s${NC}" "$result"
                         fi
                         printf "\n"
                     fi
@@ -708,18 +708,18 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
             [0-9]*)
                 idx=$((choice - 1))
                 if [ "$idx" -ge 0 ] && [ "$idx" -lt ${#ISSUES[@]} ]; then
-                    printf "  ${ARROW} ${FIX_DESCRIPTIONS[$idx]}...\n"
+                    printf "  ${ARROW} %s...\n" "${FIX_DESCRIPTIONS[$idx]}"
                     result=$(eval "${FIX_COMMANDS[$idx]}" 2>&1)
                     if [ $? -eq 0 ]; then
                         printf "     ${CHECK} ${GREEN}Done${NC}"
                         if [ -n "$result" ]; then
-                            printf " - ${DIM}$result${NC}"
+                            printf " - ${DIM}%s${NC}" "$result"
                         fi
                         printf "\n"
                     else
                         printf "     ${CROSS} ${RED}Failed${NC}"
                         if [ -n "$result" ]; then
-                            printf " - ${DIM}$result${NC}"
+                            printf " - ${DIM}%s${NC}" "$result"
                         fi
                         printf "\n"
                     fi
