@@ -812,7 +812,7 @@ echo ""
 printf "  ${BOLD}${WHITE}💾 STORAGE${NC}\n"
 echo ""
 
-disk_info=$(df -h / | tail -1)
+disk_info=$(df -hc / 2>/dev/null | tail -1)
 disk_used=$(echo "$disk_info" | awk '{print $3}')
 disk_total=$(echo "$disk_info" | awk '{print $2}')
 disk_avail=$(echo "$disk_info" | awk '{print $4}')
