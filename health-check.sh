@@ -49,7 +49,7 @@ readonly SCORE_MAX=100
 readonly SCORE_LOAD_PENALTY=20
 readonly SCORE_MEM_PENALTY=20
 readonly SCORE_DISK_PENALTY=25
-readonly SCORE_ISSUE_PENALTY=5
+readonly SCORE_ISSUE_PENALTY=3
 
 readonly GRADE_A_THRESHOLD=90
 readonly GRADE_B_THRESHOLD=80
@@ -418,10 +418,7 @@ check_browser() {
 }
 
 
-check_problem_processes() {
-    print_section_header "👻 PROBLEM PROCESSES"
-    
-    # Zombies
+detect_zombies() {
     printf "     ${DIM}── Zombie Processes ──${NC}\n"
     local zombies=$(ps aux | awk '$8 ~ /Z/ {print $2, $3, $11}')
     if [ -n "$zombies" ]; then
@@ -433,8 +430,166 @@ check_problem_processes() {
     else
         printf "     ${CHECK} ${GREEN}No zombie processes${NC}\n"
     fi
+}
 
-    # Not Responding
+
+detect_memory_hogs() {
+    # Memory Hogs (>500MB + <5% CPU)
+    echo ""; printf "     ${DIM}── Memory Hogs ──${NC}\n"
+    local mem_hogs_found=0
+    while read -r pid pcpu rss comm; do
+        [ -z "$pid" ] && continue
+        local rss_mb=$((rss / 1024))
+        local pcpu_int=$(safe_int "$pcpu")
+        if [ "$rss_mb" -gt 500 ] && [ "$pcpu_int" -lt 5 ]; then
+            mem_hogs_found=1
+            local proc_name=$(basename "$comm")
+            printf "     ${WARN} ${YELLOW}Memory Hog:${NC} %s ${DIM}(%sMB RAM, %s%% CPU)${NC}\n" "$proc_name" "$rss_mb" "$pcpu"
+            add_issue "Memory hog: ${proc_name}" "Quit idle app ${proc_name}" "kill ${pid}"
+        fi
+    done < <(ps -axo pid,pcpu,rss,comm | awk 'NR>1 && $3 > 512000 {print $1, $2, $3, $4}')
+    [ "$mem_hogs_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No memory hogs detected${NC}\n"
+}
+
+
+detect_idle_bg_apps() {
+    # Idle Background Apps (Running 2+ hours + <1% CPU)
+    echo ""; printf "     ${DIM}── Idle Background Apps ──${NC}\n"
+    local idle_apps_found=0
+    while read -r pid pcpu etime comm; do
+        [ -z "$pid" ] && continue
+
+        # Check if etime is > 2 hours
+        # Format: [[dd-]hh:]mm:ss
+        local is_idle=0
+        if [[ "$etime" == *-* ]]; then # Days present
+            is_idle=1
+        else
+            local hours=$(echo "$etime" | awk -F: '{if (NF==3) print $1; else print 0}')
+            if [ "$hours" -ge 2 ]; then
+                is_idle=1
+            fi
+        fi
+
+        if [ "$is_idle" -eq 1 ]; then
+            local pcpu_int=$(safe_int "$pcpu")
+            # Skip processes with 0.0% CPU usage
+            if [ "$pcpu_int" -lt 1 ] && [ "$(echo "$pcpu > 0" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then
+                # Skip essential system processes or those that are likely not "apps" in the traditional sense
+                local proc_name=$(basename "$comm")
+                if [[ "$comm" == "/Applications/"* ]] || [[ "$comm" == *".app/"* ]]; then
+                    idle_apps_found=1
+                    printf "     ${WARN} ${YELLOW}Idle App:${NC} %s ${DIM}(Running: %s, CPU: %s%%)${NC}\n" "$proc_name" "$etime" "$pcpu"
+                    add_issue "Idle background app: ${proc_name}" "Quit idle app ${proc_name}" "kill ${pid}"
+                fi
+            fi
+        fi
+    done < <(ps -axo pid,pcpu,etime,comm | awk 'NR>1 {print $1, $2, $3, $4}')
+    [ "$idle_apps_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No idle background apps detected${NC}\n"
+}
+
+detect_resource_heavy_agents() {
+    # Resource-heavy Agents (>10% CPU or >5% memory)
+    echo ""; printf "     ${DIM}── Resource-heavy Agents ──${NC}\n"
+    local heavy_agents_found=0
+    while read -r pid pcpu rss comm; do
+        [ -z "$pid" ] && continue
+
+        # Only check agents/daemons
+        if [[ "$comm" == *"LaunchAgents"* ]] || [[ "$comm" == *"LaunchDaemons"* ]] || [[ "$comm" == *"/usr/libexec/"* ]]; then
+            # Filter out some very common system processes that might spike but are usually fine
+            [[ "$comm" == *"kernel_task"* ]] && continue
+            [[ "$comm" == *"WindowServer"* ]] && continue
+
+            local pcpu_int=$(safe_int "$pcpu")
+            local total_mem_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}')
+            local rss_mb=$((rss / 1024))
+            local mem_percent=$((total_mem_mb > 0 ? rss_mb * 100 / total_mem_mb : 0))
+
+            if [ "$pcpu_int" -gt 10 ] || [ "$mem_percent" -gt 5 ]; then
+                heavy_agents_found=1
+                local proc_name=$(basename "$comm")
+                printf "     ${CROSS} ${RED}Heavy Agent:${NC} %s ${DIM}(CPU: %s%%, Mem: %s%%)${NC}\n" "$proc_name" "$pcpu" "$mem_percent"
+                add_issue "Resource-heavy agent: ${proc_name}" "Kill agent ${proc_name}" "kill -9 ${pid}"
+            fi
+        fi
+    done < <(ps -axo pid,pcpu,rss,comm | awk 'NR>1 {print $1, $2, $3, $4}')
+    [ "$heavy_agents_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No resource-heavy agents detected${NC}\n"
+}
+
+detect_bloatware() {
+    echo ""; printf "     ${DIM}── Bloatware Agents ──${NC}\n"
+    local bloatware_found=0
+    local apple_bloatware_agents_list=(
+        "com.apple.accessibility.MotionTrackingAgent"
+        "com.apple.ap.adprivacyd"
+        "com.apple.ap.promotedcontentd"
+        "com.apple.geoanalyticsd"
+        "com.apple.inputanalyticsd"
+        "com.apple.routined"
+        "com.apple.macos.studentd"
+    )
+    local apple_bloatware_daemons_list=(
+        "com.apple.analyticsd"
+        "com.apple.audioanalyticsd"
+        "com.apple.ecosystemanalyticsd"
+        "com.apple.wifianalyticsd"
+    )
+    local other_bloatware_list=(
+        # Google
+        "com.google.keystone"
+        # Adobe
+        "com.adobe.AdobeCreativeCloud"
+        "com.adobe.ccxprocess"
+        "com.adobe.CCLibrary"
+        # Microsoft
+        "com.microsoft.update"
+        # Spotify
+        "com.spotify.client.startuphelper"
+        "com.spotify.webhelper"
+        # Antivirus
+        "com.avast"
+        "com.McAfee"
+        # Other utils
+        "com.dropbox.DropboxMacUpdate.agent"
+        "com.oracle.java"
+        "com.symantec"
+        "com.norton"
+        "com.avg"
+        "com.mackeeper"
+        "com.zeobit"
+        "com.pckeeper"
+        "com.cleanmymac"
+        "com.macpaw"
+    )
+    for agent in "${apple_bloatware_agents_list[@]}"; do
+        if launchctl list 2>/dev/null | grep -q "$agent"; then
+            bloatware_found=1
+            printf "     ${WARN} ${YELLOW}Apple bloatware:${NC} %s\n" "$agent"
+            add_issue "Apple bloatware agent detected: ${agent} (disabling SIP is required)" "Disable agent ${agent}" "launchctl bootout gui/501/${agent} 2>/dev/null; launchctl disable gui/501/${agent} 2>/dev/null"
+        fi
+    done
+
+    for agent in "${apple_bloatware_daemons_list[@]}"; do
+        if launchctl list 2>/dev/null | grep -q "$agent"; then
+            bloatware_found=1
+            printf "     ${WARN} ${YELLOW}Apple bloatware:${NC} %s\n" "$agent"
+            add_issue "Apple bloatware daemon detected: ${agent} (disabling SIP is required)" "Disable agent ${agent}" "sudo launchctl bootout system/${agent} 2>/dev/null; sudo launchctl disable system/${agent} 2>/dev/null"
+        fi
+    done
+
+    for agent in "${other_bloatware_list[@]}"; do
+        if launchctl list 2>/dev/null | grep -q "$agent"; then
+            bloatware_found=1
+            printf "     ${WARN} ${YELLOW}3rd party bloatware:${NC} %s\n" "$agent"
+            add_issue "3rd party bloatware agent detected: ${agent}" "Disable agent ${agent}" "launchctl bootout gui/$(id -u)/${agent} 2>/dev/null; launchctl disable gui/$(id -u)/${agent} 2>/dev/null"
+        fi
+    done
+    [ "$bloatware_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No bloatware agents detected${NC}\n"
+}
+
+
+detect_hung_processes() {
     echo ""; printf "     ${DIM}── Not Responding Apps ──${NC}\n"
     local hung=0
     if command -v lsappinfo &>/dev/null; then
@@ -448,6 +603,19 @@ check_problem_processes() {
     [ "$hung" -eq 0 ] && printf "     ${CHECK} ${GREEN}No hung applications detected${NC}\n"
 
     echo ""
+}
+
+
+check_problem_processes() {
+    print_section_header "👻 PROBLEM PROCESSES"
+
+    detect_zombies
+    detect_memory_hogs
+    detect_idle_bg_apps
+    detect_resource_heavy_agents
+    detect_bloatware
+    detect_hung_processes
+
     line
 }
 

@@ -23,6 +23,12 @@ Open Terminal and paste:
 curl -sL https://raw.githubusercontent.com/scottnailon/macos-health-check/main/health-check.sh | bash
 ```
 
+### Options:
+
+- `--log [FILE]` - Save output to a file (defaults to `/tmp/health-check-DATE.log`)
+- `--verbose`, `-v` - Show detailed output
+- `--help`, `-h` - Show usage instructions
+
 That's it! No installation required.
 
 ## 📸 Screenshot
@@ -31,12 +37,12 @@ That's it! No installation required.
 ══════════════════════════════════════════════════════════════════════
 
                         🖥  macOS Health Check
-                       System Performance Monitor
+                      System Performance Monitor
 
 ══════════════════════════════════════════════════════════════════════
 
-  📅 Monday, December 15 2025 at 10:30 AM
-  💻 macOS 15.1
+  📅 Tuesday, December 23 2025 at 03:36 PM
+  💻 macOS 15.2
 
 ──────────────────────────────────────────────────────────────────────
 
@@ -44,32 +50,30 @@ That's it! No installation required.
 
      ✓ Low load - your Mac is relaxed
 
-     Load: 1.25 (8 CPU cores available)
-     [████░░░░░░░░░░░░░░░░░░░░░░░░░░] 15%
+     Load: 1.25% (8 CPU cores available)
+     [█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 1%
 
 ──────────────────────────────────────────────────────────────────────
 
   🔥 TOP CPU CONSUMERS
 
-     🟢   2.1%  Safari               PID: 1234
-     🟢   1.8%  Terminal             PID: 5678
-     🟢   1.2%  Finder               PID: 9012
+     🟢   5.2%  WindowServer         PID: 594
+     🟢   3.8%  pycharm              PID: 83337
+     🟢   2.9%  com.apple.WebKit.Web PID: 51083
+     🟢   1.5%  Telegram             PID: 1317
+     🟢   0.8%  ControlCenter        PID: 1234
 
 ──────────────────────────────────────────────────────────────────────
 
   🔍 PROCESS ANALYSIS
 
      ── System Processes ──
-     ✓ kernel_task (2.1% - normal)
-     ✓ WindowServer (4.5% - normal)
-     ✓ Display Driver (idle)
-     ✓ Spotlight (0% - normal)
-     ✓ Photos (1.2% - normal)
-     ✓ iCloud (0.5% - normal)
+     ✓ kernel_task (0.0% - normal)
+     ✓ WindowServer (5.2% - normal)
+     ✓ Spotlight (0.5% - normal)
 
      ── Browsers ──
-     ✓ Safari (12.5% across 4 tabs)
-     ✓ Chrome (8.2% across 6 tabs)
+     ✓ Safari (1.2%)
 
      ── Other High CPU Processes ──
      ✓ No other high-CPU processes detected
@@ -84,15 +88,6 @@ That's it! No installation required.
      ── Not Responding Apps ──
      ✓ No hung applications detected
 
-     ── Memory Hogs (idle but using RAM) ──
-     ✓ No idle memory hogs detected
-
-     ── Idle Background Apps ──
-     ✓ No idle background apps detected
-
-     ── Unnecessary Launch Agents ──
-     ✓ No unnecessary launch agents detected
-
 ──────────────────────────────────────────────────────────────────────
 
   🧠 MEMORY STATUS
@@ -100,9 +95,9 @@ That's it! No installation required.
      ✓ Plenty of memory available
 
      Used: 8.2GB / 16.0GB
-     [████████████████░░░░░░░░░░░░░░] 51%
+     [███████████████░░░░░░░░░░░░░░] 51%
 
-     Active: 6.1GB  •  Wired: 2.1GB  •  Free: 4.2GB
+     Active: 3.1GB  •  Wired: 2.1GB  •  Free: 4.5GB
 
 ──────────────────────────────────────────────────────────────────────
 
@@ -110,8 +105,22 @@ That's it! No installation required.
 
      ✓ Plenty of storage available
 
-     Used: 234Gi / 500Gi
-     [██████████████░░░░░░░░░░░░░░░░] 47%
+     Used: 210Gi / 460Gi (250Gi available)
+     [█████████████░░░░░░░░░░░░░░░░] 45%
+
+──────────────────────────────────────────────────────────────────────
+
+  🚀 LAUNCH AGENTS & DAEMONS
+
+     ── User Launch Agents ──
+     ✓ All user agents running normally
+     (142 agents currently running)
+
+     ── Recently Crashed ──
+     ✓ No recent crashes detected
+
+     ── Disabled Agents ──
+     ✓ All configured agents are loaded
 
 ──────────────────────────────────────────────────────────────────────
 
@@ -218,11 +227,9 @@ Some issues are detected and explained, but **cannot be automatically fixed** be
 | Type | How It's Detected | Why It's a Problem |
 |------|-------------------|-------------------|
 | **Zombie processes** | Process state shows "Z" | Dead processes taking up PID slots, parent didn't clean up |
-| **Hung apps** | macOS marks as "not responding" or in uninterruptible sleep | App is frozen, won't respond to input |
-| **Memory hogs** | >500MB RAM but <5% CPU | App sitting idle but hogging memory |
-| **Idle apps** | Running 2+ hours with <1% CPU | Forgotten app wasting resources |
-| **Bloatware agents** | Matches known list (Adobe, McAfee, Norton, MacKeeper, etc.) | Unnecessary background services |
-| **Heavy agents** | Background agent using >10% CPU or >5% memory | Agent consuming too many resources |
+| **Hung apps** | macOS marks as "not responding" | App is frozen, won't respond to input |
+| **Failed Launch Agents** | Exit status is non-zero | Agent is crashing or failed to start |
+| **Recent Crashes** | Crash logs in last 24h | Indicates unstable software |
 
 ### Resource Monitoring
 | Resource | Warning | Critical |
