@@ -3,12 +3,13 @@
 # macOS System Health Monitor - Beautiful Edition with Auto-Fix
 # https://github.com/scottnailon/macos-health-check
 
+
+# ============ CONFIGURATION & GLOBALS ============
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 GRAY='\033[0;90m'
@@ -23,27 +24,118 @@ CROSS="${RED}✗${NC}"
 ARROW="${CYAN}➜${NC}"
 DOT="${GRAY}●${NC}"
 
-# Arrays to store issues and fixes
+# Thresholds
+readonly HIGH_CPU_THRESHOLD=50
+readonly MODERATE_CPU_THRESHOLD=20
+readonly WINDOWSERVER_CPU_THRESHOLD=30
+readonly DISPLAY_DRIVER_CPU_THRESHOLD=50
+readonly SPOTLIGHT_CPU_THRESHOLD=30
+readonly TIME_MACHINE_CPU_THRESHOLD=20
+readonly PHOTOS_CPU_THRESHOLD=30
+readonly PHOTOS_IDLE_THRESHOLD=5
+readonly ICLOUD_CPU_THRESHOLD=30
+readonly ICLOUD_IDLE_THRESHOLD=5
+readonly BROWSER_CPU_THRESHOLD=100
+
+readonly MEMORY_CRITICAL=85
+readonly MEMORY_WARNING=70
+
+readonly DISK_CRITICAL=90
+readonly DISK_WARNING=75
+
+readonly SCORE_MAX=100
+readonly SCORE_LOAD_PENALTY=20
+readonly SCORE_MEM_PENALTY=20
+readonly SCORE_DISK_PENALTY=25
+readonly SCORE_ISSUE_PENALTY=3
+
+readonly GRADE_A_THRESHOLD=90
+readonly GRADE_B_THRESHOLD=80
+readonly GRADE_C_THRESHOLD=70
+readonly GRADE_D_THRESHOLD=60
+
+# Issue tracking
 declare -a ISSUES
 declare -a FIX_COMMANDS
 declare -a FIX_DESCRIPTIONS
 issue_count=0
 
-# Get terminal width
+# System info cache
+LOAD_INT=0
+LOAD_VAL=0
+CORES=0
+MEM_PERCENT=0
+DISK_PERCENT=0
+
+# Logging settings
+LOG_FILE=""
+VERBOSE=false
+
+# Common bloatware list
+BLOATWARE_LIST=(
+    # Google
+    "com.google.keystone"
+    # Adobe
+    "com.adobe.AdobeCreativeCloud"
+    "com.adobe.ccxprocess"
+    "com.adobe.CCLibrary"
+    # Microsoft
+    "com.microsoft.update"
+    # Spotify
+    "com.spotify.client.startuphelper"
+    "com.spotify.webhelper"
+    # Antivirus
+    "com.avast"
+    "com.McAfee"
+    # Other utils
+    "com.dropbox.DropboxMacUpdate.agent"
+    "com.oracle.java"
+    "com.symantec"
+    "com.norton"
+    "com.avg"
+    "com.mackeeper"
+    "com.zeobit"
+    "com.pckeeper"
+    "com.cleanmymac"
+    "com.macpaw"
+)
+
+# Terminal settings
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 60)
-if [ "$TERM_WIDTH" -gt 70 ]; then
-    TERM_WIDTH=70
+[ "$TERM_WIDTH" -gt 70 ] && TERM_WIDTH=70
+
+# ============ LOGGING ============
+
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --log)
+            LOG_FILE="${2:-/tmp/health-check-$(date +%Y%m%d-%H%M%S).log}"
+            shift 2
+            ;;
+        --verbose|-v)
+            VERBOSE=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--log FILE] [--verbose]"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Enable logging if requested
+if [ -n "$LOG_FILE" ]; then
+    exec > >(sed -u 's/\x1b\[[0-9;]*m//g; s/\x1b\[3J//g; s/\x1b\[H//g; s/\x1b\[2J//g' | tee "$LOG_FILE")
+    exec 2>&1
+    echo "Logging to: $LOG_FILE"
 fi
 
-# Function to add an issue with its fix
-add_issue() {
-    ISSUES[$issue_count]="$1"
-    FIX_DESCRIPTIONS[$issue_count]="$2"
-    FIX_COMMANDS[$issue_count]="$3"
-    issue_count=$((issue_count + 1))
-}
+# ============ UI HELPERS ============
 
-# Function to print centered text
 center() {
     local text="$1"
     local width=$TERM_WIDTH
@@ -51,22 +143,59 @@ center() {
     printf "%*s%s\n" $padding "" "$text"
 }
 
-# Function to print a line
 line() {
     printf "${GRAY}"
     printf '%.0s─' $(seq 1 $TERM_WIDTH)
     printf "${NC}\n"
 }
 
-# Function to print a double line
 double_line() {
     printf "${CYAN}"
     printf '%.0s═' $(seq 1 $TERM_WIDTH)
     printf "${NC}\n"
 }
 
-# Function to ask yes/no
-# Uses /dev/tty to read input directly from terminal (works with curl | bash)
+print_header() {
+    clear
+    echo ""
+    double_line
+    echo ""
+    printf "${CYAN}"
+    center "🖥  macOS Health Check"
+    printf "${NC}"
+    printf "${DIM}"
+    center "System Performance Monitor"
+    printf "${NC}"
+    echo ""
+    double_line
+    echo ""
+    printf "${GRAY}  📅 $(date '+%A, %B %d %Y at %I:%M %p')${NC}\n"
+    printf "${GRAY}  💻 $(sw_vers -productName 2>/dev/null || echo 'macOS') $(sw_vers -productVersion 2>/dev/null || echo '')${NC}\n"
+    echo ""
+    line
+}
+
+print_section_header() {
+    echo ""
+    printf "  ${BOLD}${WHITE}%s${NC}\n" "$1"
+    echo ""
+}
+
+draw_bar() {
+    local percent=$1
+    local filled_color=$2
+    local bar_width=30
+    [ "$percent" -gt 100 ] && percent=100
+    local filled=$(( percent * bar_width / 100 ))
+    local empty=$(( bar_width - filled ))
+    
+    printf "     ${GRAY}[${NC}${filled_color}"
+    [ "$filled" -gt 0 ] && printf '%.0s█' $(seq 1 $filled)
+    printf "${GRAY}"
+    [ "$empty" -gt 0 ] && printf '%.0s░' $(seq 1 $empty)
+    printf "${GRAY}]${NC} ${percent}%%\n"
+}
+
 ask_yes_no() {
     local prompt="$1"
     local response
@@ -78,860 +207,598 @@ ask_yes_no() {
     esac
 }
 
-# Function to format bytes to human readable
-format_bytes() {
-    local bytes=$1
-    if [ "$bytes" -gt 1073741824 ]; then
-        echo "$(echo "scale=1; $bytes / 1073741824" | bc)GB"
-    elif [ "$bytes" -gt 1048576 ]; then
-        echo "$(echo "scale=1; $bytes / 1048576" | bc)MB"
-    else
-        echo "${bytes}B"
+# ============ UTILITIES ============
+
+check_macos_version() {
+    local version=$(sw_vers -productVersion 2>/dev/null)
+    local major=$(echo "$version" | cut -d. -f1)
+
+    if [ "$major" -lt 11 ]; then
+        echo "${WARN} ${YELLOW}Warning: This script is optimized for macOS 11+${NC}"
+        echo "${DIM}Current version: $version${NC}"
+        sleep 2
     fi
 }
 
-# Clear screen and show header
-clear
-echo ""
-double_line
-echo ""
-printf "${CYAN}"
-center "🖥  macOS Health Check"
-printf "${NC}"
-printf "${DIM}"
-center "System Performance Monitor"
-printf "${NC}"
-echo ""
-double_line
-echo ""
-printf "${GRAY}  📅 $(date '+%A, %B %d %Y at %I:%M %p')${NC}\n"
-printf "${GRAY}  💻 $(sw_vers -productName 2>/dev/null || echo 'macOS') $(sw_vers -productVersion 2>/dev/null || echo '')${NC}\n"
-echo ""
-line
+add_issue() {
+    ISSUES[$issue_count]="$1"
+    FIX_DESCRIPTIONS[$issue_count]="$2"
+    FIX_COMMANDS[$issue_count]="$3"
+    issue_count=$((issue_count + 1))
+}
 
-# ============ SYSTEM LOAD ============
-echo ""
-printf "  ${BOLD}${WHITE}📊 SYSTEM LOAD${NC}\n"
-echo ""
-
-LOAD=$(uptime | awk -F'load averages:' '{print $2}' | awk '{print $1}' | tr -d ',')
-LOAD_INT=$(echo $LOAD | cut -d. -f1)
-CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-
-# Create load bar
-load_percent=$(echo "$LOAD $CORES" | awk '{printf "%.0f", ($1/$2)*100}')
-if [ "$load_percent" -gt 100 ]; then load_percent=100; fi
-bar_width=30
-filled=$(( load_percent * bar_width / 100 ))
-empty=$(( bar_width - filled ))
-
-if [ "$LOAD_INT" -gt "$CORES" ]; then
-    bar_color=$RED
-    status_icon=$WARN
-    status_text="${YELLOW}High load - your Mac is working hard${NC}"
-elif [ "$LOAD_INT" -gt $((CORES / 2)) ]; then
-    bar_color=$YELLOW
-    status_icon=$CHECK
-    status_text="${GREEN}Moderate load - running smoothly${NC}"
-else
-    bar_color=$GREEN
-    status_icon=$CHECK
-    status_text="${GREEN}Low load - your Mac is relaxed${NC}"
-fi
-
-printf "     ${status_icon} ${status_text}\n\n"
-printf "     Load: ${BOLD}$LOAD${NC} ${DIM}(${CORES} CPU cores available)${NC}\n"
-printf "     ${GRAY}[${NC}${bar_color}"
-printf '%.0s█' $(seq 1 $filled 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}"
-printf '%.0s░' $(seq 1 $empty 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}]${NC} ${load_percent}%%\n"
-echo ""
-line
-
-# ============ TOP PROCESSES ============
-echo ""
-printf "  ${BOLD}${WHITE}🔥 TOP CPU CONSUMERS${NC}\n"
-echo ""
-
-# v2: Use macOS native CPU sorting, skip header explicitly, validate numeric
-ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -5 | while read -r cpu pid proc; do
-    # Skip if cpu is empty or not starting with a digit
-    case "$cpu" in
-        [0-9]*) ;;
-        *) continue ;;
-    esac
-
-    cpu_int=${cpu%%.*}
-    proc=$(echo "$proc" | cut -c1-20)
-
-    if [ "$cpu_int" -gt 50 ]; then
-        color=$RED
-        icon="🔴"
-    elif [ "$cpu_int" -gt 20 ]; then
-        color=$YELLOW
-        icon="🟡"
-    else
-        color=$GREEN
-        icon="🟢"
-    fi
-
-    printf "     ${icon} ${color}%5.1f%%${NC}  %-20s ${DIM}PID: %s${NC}\n" "$cpu" "$proc" "$pid"
-done
-echo ""
-line
-
-# ============ PROCESS ANALYSIS ============
-echo ""
-printf "  ${BOLD}${WHITE}🔍 PROCESS ANALYSIS${NC}\n"
-echo ""
-
-issues_found=0
-
-# Function to get process runtime
 get_runtime() {
     local pid=$1
     local etime=$(ps -o etime= -p "$pid" 2>/dev/null | xargs)
-    if [ -n "$etime" ]; then
-        echo "$etime"
+    echo "${etime:-unknown}"
+}
+
+format_mem() {
+    local mb=$1
+    if [ "$mb" -gt 1024 ]; then
+        printf "%.1fGB" $(echo "$mb" | awk '{printf "%.1f", $1/1024}')
     else
-        echo "unknown"
+        printf "%dMB" "$mb"
     fi
 }
 
-# ---- System Processes ----
-printf "     ${DIM}── System Processes ──${NC}\n"
+safe_int() {
+    local val="${1:-0}"
+    echo "${val%%.*}" | grep -qE '^[0-9]+$' && echo "${val%%.*}" || echo 0
+}
 
-# kernel_task - Thermal management (can't be killed)
-KERNEL_CPU=$(ps aux | grep -E "kernel_task" | grep -v grep | awk '{print $3}' | head -1)
-if [ -n "$KERNEL_CPU" ]; then
-    KERNEL_INT=${KERNEL_CPU%%.*}
-    if [ "$KERNEL_INT" -gt 50 ]; then
-        printf "     ${WARN} ${YELLOW}kernel_task${NC} using ${BOLD}${KERNEL_CPU}%%${NC} CPU\n"
-        printf "        ${DIM}${ARROW} Thermal throttling - your Mac is running hot${NC}\n"
-        printf "        ${DIM}${ARROW} Tip: Check ventilation, close heavy apps, use a cooling pad${NC}\n"
-        issues_found=$((issues_found + 1))
+# ============ ANALYSIS MODULES ============
+
+check_system_load() {
+    print_section_header "📊 SYSTEM LOAD"
+    
+    LOAD_VAL=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
+    LOAD_INT=$(printf "%.0f" "$LOAD_VAL" 2>/dev/null || echo 0)
+    CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 0)
+
+    if [ "$CORES" -eq 0 ]; then
+        printf "${CROSS} ${RED}Unable to determine CPU cores${NC}\n"
+        return 1
+    fi
+
+    local status_icon=$CHECK
+    local status_text="${GREEN}Low load - your Mac is relaxed${NC}"
+    local bar_color=$GREEN
+
+    if [ "$LOAD_INT" -gt "$CORES" ]; then
+        bar_color=$RED
+        status_icon=$WARN
+        status_text="${YELLOW}High load - your Mac is working hard${NC}"
+    elif [ "$LOAD_INT" -gt $((CORES / 2)) ]; then
+        bar_color=$YELLOW
+        status_icon=$CHECK
+        status_text="${GREEN}Moderate load - running smoothly${NC}"
+    fi
+
+    printf "     ${status_icon} ${status_text}\n\n"
+    printf "     Load: ${BOLD}$LOAD_VAL%%${NC} ${DIM}(${CORES} CPU cores available)${NC}\n"
+
+    local load_percent=$(awk -v load="$LOAD_VAL" -v cores="$CORES" 'BEGIN {
+        p = load
+        printf "%.0f", (p > 100 ? 100 : p)
+    }')
+    draw_bar "$load_percent" "$bar_color"
+    echo ""
+    line
+}
+
+check_top_cpu() {
+    print_section_header "🔥 TOP CPU CONSUMERS"
+    
+    ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -5 | while read -r cpu pid proc; do
+        [[ ! "$cpu" =~ ^[0-9] ]] && continue
+        
+        local cpu_int=$(safe_int "$cpu")
+        local proc_short=$(echo "$proc" | cut -c1-20)
+        local color=$GREEN
+        local icon="🟢"
+
+        if [ "$cpu_int" -gt $HIGH_CPU_THRESHOLD ]; then
+            color=$RED; icon="🔴"
+        elif [ "$cpu_int" -gt $MODERATE_CPU_THRESHOLD ]; then
+            color=$YELLOW; icon="🟡"
+        fi
+
+        printf "     ${icon} ${color}%5.1f%%${NC}  %-20s ${DIM}PID: %s${NC}\n" "$cpu" "$proc_short" "$pid"
+    done
+    echo ""
+    line
+}
+
+check_process_analysis() {
+    print_section_header "🔍 PROCESS ANALYSIS"
+    local issues_found_here=0
+
+    # Cache ps output once instead of multiple calls
+    local ps_output=$(ps auxww 2>/dev/null)
+
+    # System Processes
+    printf "     ${DIM}── System Processes ──${NC}\n"
+
+    # kernel_task - use cached output
+    local k_cpu=$(echo "$ps_output" | awk '/kernel_task/ && !/awk/ {print $3; exit}')
+    if [ -n "$k_cpu" ]; then
+        local k_cpu_int=$(safe_int "$k_cpu")
+        if [ "$k_cpu_int" -gt $HIGH_CPU_THRESHOLD ]; then
+            printf "     ${WARN} ${YELLOW}kernel_task${NC} using ${BOLD}${k_cpu}%%${NC} CPU\n"
+            printf "        ${DIM}${ARROW} Thermal throttling - your Mac is running hot${NC}\n"
+            issues_found_here=$((issues_found_here + 1))
+        else
+            printf "     ${CHECK} ${GREEN}kernel_task${NC} ${DIM}(${k_cpu}%% - normal)${NC}\n"
+        fi
+    fi
+
+    # WindowServer - use cached output
+    local w_info=$(echo "$ps_output" | awk '/WindowServer/ && !/awk/ {print $2, $3; exit}')
+    if [ -n "$w_info" ]; then
+        local w_pid=$(echo "$w_info" | awk '{print $1}')
+        local w_cpu=$(echo "$w_info" | awk '{print $2}')
+        if [ "${w_cpu%%.*}" -gt $WINDOWSERVER_CPU_THRESHOLD ]; then
+            printf "     ${WARN} ${YELLOW}WindowServer${NC} using ${BOLD}${w_cpu}%%${NC} CPU ${DIM}(running: $(get_runtime "$w_pid"))${NC}\n"
+            printf "        ${DIM}${ARROW} Tip: Close windows, reduce transparency${NC}\n"
+            issues_found_here=$((issues_found_here + 1))
+        else
+            printf "     ${CHECK} ${GREEN}WindowServer${NC} ${DIM}(${w_cpu}%% - normal)${NC}\n"
+        fi
+    fi
+
+    # DisplaysExt
+    local d_info=$(ps aux | grep DisplaysExt | grep -v grep | head -1)
+    if [ -n "$d_info" ]; then
+        local d_pid=$(echo "$d_info" | awk '{print $2}')
+        local d_cpu=$(echo "$d_info" | awk '{print $3}')
+        if [ "${d_cpu%%.*}" -gt $DISPLAY_DRIVER_CPU_THRESHOLD ]; then
+            printf "     ${CROSS} ${RED}Display Driver${NC} using ${BOLD}${d_cpu}%%${NC} CPU\n"
+            add_issue "DisplaysExt high CPU (${d_cpu}%)" "Kill DisplaysExt" "sudo killall DisplaysExt"
+            issues_found_here=$((issues_found_here + 1))
+        else
+            printf "     ${CHECK} ${GREEN}Display Driver${NC} ${DIM}(${d_cpu}%% - normal)${NC}\n"
+        fi
+    fi
+
+    # Spotlight
+    local s_cpu=$(ps aux | grep -E "(corespotlightd|mds_stores|mdworker)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+    if [ "${s_cpu%%.*}" -gt $SPOTLIGHT_CPU_THRESHOLD ]; then
+        printf "     ${WARN} ${YELLOW}Spotlight${NC} indexing ${DIM}(${s_cpu}%% total)${NC}\n"
+        add_issue "Spotlight using ${s_cpu}% CPU" "Rebuild Spotlight index" "sudo mdutil -E /"
+        issues_found_here=$((issues_found_here + 1))
     else
-        printf "     ${CHECK} ${GREEN}kernel_task${NC} ${DIM}(${KERNEL_CPU}%% - normal)${NC}\n"
+        printf "     ${CHECK} ${GREEN}Spotlight${NC} ${DIM}(${s_cpu}%% - normal)${NC}\n"
     fi
-fi
 
-# WindowServer - Graphics compositor
-WINDOW_CPU=$(ps aux | grep -E "WindowServer" | grep -v grep | awk '{print $3}' | head -1)
-if [ -n "$WINDOW_CPU" ]; then
-    WINDOW_INT=${WINDOW_CPU%%.*}
-    if [ "$WINDOW_INT" -gt 30 ]; then
-        WINDOW_PID=$(ps aux | grep -E "WindowServer" | grep -v grep | awk '{print $2}' | head -1)
-        runtime=$(get_runtime "$WINDOW_PID")
-        printf "     ${WARN} ${YELLOW}WindowServer${NC} using ${BOLD}${WINDOW_CPU}%%${NC} CPU ${DIM}(running: ${runtime})${NC}\n"
-        printf "        ${DIM}${ARROW} Graphics compositor - lots of screen activity${NC}\n"
-        printf "        ${DIM}${ARROW} Tip: Close windows, reduce transparency in Accessibility settings${NC}\n"
-        issues_found=$((issues_found + 1))
+    # Time Machine
+    local tm_cpu=$(ps aux | grep -E "[b]ackupd" | awk '{print $3}' | head -1)
+    if [ -n "$tm_cpu" ]; then
+        if [ "${tm_cpu%%.*}" -gt $TIME_MACHINE_CPU_THRESHOLD ]; then
+            printf "     ${WARN} ${YELLOW}Time Machine${NC} backing up ${DIM}(${tm_cpu}%%)${NC}\n"
+            issues_found_here=$((issues_found_here + 1))
+        fi
+    fi
+
+    # Photos
+    local p_cpu=$(ps aux | grep -E "(photolibraryd|photoanalysisd)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+    if [ "${p_cpu%%.*}" -gt $PHOTOS_CPU_THRESHOLD ]; then
+        printf "     ${WARN} ${YELLOW}Photos${NC} analyzing ${DIM}(${p_cpu}%% total)${NC}\n"
+        add_issue "Photos high CPU" "Quit Photos" "osascript -e 'quit app \"Photos\"'"
+        issues_found_here=$((issues_found_here + 1))
+    elif [ "${p_cpu%%.*}" -gt $PHOTOS_IDLE_THRESHOLD ]; then
+        printf "     ${CHECK} ${GREEN}Photos${NC} ${DIM}(${p_cpu}%% - normal)${NC}\n"
+    fi
+
+    # iCloud
+    local ic_cpu=$(ps aux | grep -E "(cloudd|bird)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
+    if [ "${ic_cpu%%.*}" -gt $ICLOUD_CPU_THRESHOLD ]; then
+        printf "     ${WARN} ${YELLOW}iCloud${NC} syncing ${DIM}(${ic_cpu}%% total)${NC}\n"
+        issues_found_here=$((issues_found_here + 1))
+    elif [ "${ic_cpu%%.*}" -gt $ICLOUD_IDLE_THRESHOLD ]; then
+        printf "     ${CHECK} ${GREEN}iCloud${NC} ${DIM}(${ic_cpu}%% - normal)${NC}\n"
+    fi
+
+    # Browsers
+    echo ""; printf "     ${DIM}── Browsers ──${NC}\n"
+    check_browser "Brave Browser" "[B]rave" $BROWSER_CPU_THRESHOLD
+    check_browser "Google Chrome" "[G]oogle Chrome" $BROWSER_CPU_THRESHOLD
+    check_browser "Safari" "[S]afari" $BROWSER_CPU_THRESHOLD
+    check_browser "Firefox" "[f]irefox" $BROWSER_CPU_THRESHOLD
+
+    # Other High CPU
+    echo ""; printf "     ${DIM}── Other High CPU Processes ──${NC}\n"
+    local known="kernel_task|WindowServer|DisplaysExt|corespotlightd|mds|mdworker|mds_stores|backupd|photolibraryd|photoanalysisd|cloudd|bird|softwareupdated|Brave|Chrome|Safari|Firefox|Google|healthcheck"
+    local found_high=0
+    
+    while read -r cpu pid proc; do
+        [[ ! "$cpu" =~ ^[0-9] ]] && continue
+        [ "${cpu%%.*}" -lt $HIGH_CPU_THRESHOLD ] && continue
+        echo "$proc" | grep -qE "$known" && continue
+
+        found_high=1
+        printf "     ${CROSS} ${RED}${proc}${NC} using ${BOLD}${cpu}%%${NC} CPU ${DIM}(PID: ${pid})${NC}\n"
+        add_issue "${proc} using ${cpu}% CPU" "Kill ${proc}" "kill ${pid}"
+    done < <(ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -20)
+    
+    [ "$found_high" -eq 0 ] && printf "     ${CHECK} ${GREEN}No other high-CPU processes detected${NC}\n"
+
+    echo ""
+    line
+}
+
+
+check_browser() {
+    local name="$1" pattern="$2" threshold="$3"
+    local info=$(ps aux | grep -i "$pattern" | grep -v grep | awk '{sum += $3; count++} END {print sum+0, count+0}')
+    local cpu=$(echo "$info" | awk '{print $1}')
+    local count=$(echo "$info" | awk '{print $2}')
+    
+    if [ "$count" -gt 0 ]; then
+        if [ "${cpu%%.*}" -gt "$threshold" ]; then
+            printf "     ${WARN} ${YELLOW}${name}${NC} using ${BOLD}${cpu}%%${NC}\n"
+            add_issue "${name} high CPU" "Quit ${name}" "osascript -e 'quit app \"${name}\"'"
+        else
+            printf "     ${CHECK} ${GREEN}${name}${NC} ${DIM}(${cpu}%%)${NC}\n"
+        fi
+    fi
+}
+
+
+detect_zombies() {
+    printf "     ${DIM}── Zombie Processes ──${NC}\n"
+    local zombies=$(ps aux | awk '$8 ~ /Z/ {print $2, $3, $11}')
+    if [ -n "$zombies" ]; then
+        while read -r pid ppid proc; do
+            printf "     ${CROSS} ${RED}Zombie:${NC} %s ${DIM}(PID: %s)${NC}\n" "$proc" "$pid"
+            local p_name=$(ps -o comm= -p "$ppid" 2>/dev/null)
+            add_issue "Zombie process: ${proc}" "Kill parent ${p_name}" "kill -9 ${ppid}"
+        done <<< "$zombies"
     else
-        printf "     ${CHECK} ${GREEN}WindowServer${NC} ${DIM}(${WINDOW_CPU}%% - normal)${NC}\n"
+        printf "     ${CHECK} ${GREEN}No zombie processes${NC}\n"
     fi
-fi
+}
 
-# DisplaysExt - Known macOS bug
-DISPLAYS_CPU=$(ps aux | grep DisplaysExt | grep -v grep | awk '{print $3}' | head -1)
-DISPLAYS_PID=$(ps aux | grep DisplaysExt | grep -v grep | awk '{print $2}' | head -1)
-if [ -n "$DISPLAYS_CPU" ]; then
-    DISPLAYS_INT=${DISPLAYS_CPU%%.*}
-    if [ "$DISPLAYS_INT" -gt 50 ]; then
-        runtime=$(get_runtime "$DISPLAYS_PID")
-        printf "     ${CROSS} ${RED}Display Driver${NC} using ${BOLD}${DISPLAYS_CPU}%%${NC} CPU ${DIM}(running: ${runtime})${NC}\n"
-        printf "        ${DIM}${ARROW} Known macOS bug with external displays${NC}\n"
-        add_issue "DisplaysExt high CPU (${DISPLAYS_CPU}%)" "Kill DisplaysExt (auto-restarts)" "sudo killall DisplaysExt 2>/dev/null && echo 'DisplaysExt restarted'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Display Driver${NC} ${DIM}(${DISPLAYS_CPU}%% - normal)${NC}\n"
-    fi
-else
-    printf "     ${CHECK} ${GREEN}Display Driver${NC} ${DIM}(idle)${NC}\n"
-fi
 
-# Spotlight processes (corespotlightd, mds, mds_stores, mdworker)
-SPOTLIGHT_TOTAL=$(ps aux | grep -E "(corespotlightd|mds_stores|mdworker)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
-SPOTLIGHT_INT=${SPOTLIGHT_TOTAL%%.*}
-if [ "$SPOTLIGHT_INT" -gt 30 ]; then
-    printf "     ${WARN} ${YELLOW}Spotlight${NC} indexing ${DIM}(${SPOTLIGHT_TOTAL}%% total)${NC}\n"
-    printf "        ${DIM}${ARROW} Indexing files - common after updates or new files${NC}\n"
-    add_issue "Spotlight using ${SPOTLIGHT_TOTAL}% CPU" "Rebuild Spotlight index" "sudo mdutil -E / && echo 'Spotlight rebuilding - may take a while'"
-    issues_found=$((issues_found + 1))
-else
-    printf "     ${CHECK} ${GREEN}Spotlight${NC} ${DIM}(${SPOTLIGHT_TOTAL}%% - normal)${NC}\n"
-fi
+detect_memory_hogs() {
+    # Memory Hogs (>500MB + <5% CPU)
+    echo ""; printf "     ${DIM}── Memory Hogs ──${NC}\n"
+    local mem_hogs_found=0
+    while read -r pid pcpu rss comm; do
+        [ -z "$pid" ] && continue
+        local rss_mb=$((rss / 1024))
+        local pcpu_int=$(safe_int "$pcpu")
+        if [ "$rss_mb" -gt 500 ] && [ "$pcpu_int" -lt 5 ]; then
+            mem_hogs_found=1
+            local proc_name=$(basename "$comm")
+            printf "     ${WARN} ${YELLOW}Memory Hog:${NC} %s ${DIM}(%sMB RAM, %s%% CPU)${NC}\n" "$proc_name" "$rss_mb" "$pcpu"
+            add_issue "Memory hog: ${proc_name}" "Quit idle app ${proc_name}" "kill ${pid}"
+        fi
+    done < <(ps -axo pid,pcpu,rss,comm | awk 'NR>1 && $3 > 512000 {print $1, $2, $3, $4}')
+    [ "$mem_hogs_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No memory hogs detected${NC}\n"
+}
 
-# Time Machine (backupd)
-BACKUP_CPU=$(ps aux | grep -E "[b]ackupd" | awk '{print $3}' | head -1)
-if [ -n "$BACKUP_CPU" ]; then
-    BACKUP_INT=${BACKUP_CPU%%.*}
-    if [ "$BACKUP_INT" -gt 20 ]; then
-        BACKUP_PID=$(ps aux | grep -E "[b]ackupd" | awk '{print $2}' | head -1)
-        runtime=$(get_runtime "$BACKUP_PID")
-        printf "     ${WARN} ${YELLOW}Time Machine${NC} backing up ${DIM}(${BACKUP_CPU}%%, running: ${runtime})${NC}\n"
-        printf "        ${DIM}${ARROW} Backup in progress - will complete automatically${NC}\n"
-        issues_found=$((issues_found + 1))
-    fi
-fi
 
-# Photos (photolibraryd, photoanalysisd)
-PHOTOS_TOTAL=$(ps aux | grep -E "(photolibraryd|photoanalysisd)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
-PHOTOS_INT=${PHOTOS_TOTAL%%.*}
-if [ "$PHOTOS_INT" -gt 30 ]; then
-    printf "     ${WARN} ${YELLOW}Photos${NC} analyzing ${DIM}(${PHOTOS_TOTAL}%% total)${NC}\n"
-    printf "        ${DIM}${ARROW} Processing faces/objects after importing photos${NC}\n"
-    add_issue "Photos using ${PHOTOS_TOTAL}% CPU" "Quit Photos to pause" "osascript -e 'quit app \"Photos\"' 2>/dev/null && echo 'Photos closed'"
-    issues_found=$((issues_found + 1))
-elif [ "$PHOTOS_INT" -gt 5 ]; then
-    printf "     ${CHECK} ${GREEN}Photos${NC} ${DIM}(${PHOTOS_TOTAL}%% - normal)${NC}\n"
-fi
+detect_idle_bg_apps() {
+    # Idle Background Apps (Running 2+ hours + <1% CPU)
+    echo ""; printf "     ${DIM}── Idle Background Apps ──${NC}\n"
+    local idle_apps_found=0
+    while read -r pid pcpu etime comm; do
+        [ -z "$pid" ] && continue
 
-# iCloud (cloudd, bird, nsurlsessiond)
-ICLOUD_TOTAL=$(ps aux | grep -E "(cloudd|bird)" | grep -v grep | awk '{sum += $3} END {print sum+0}')
-ICLOUD_INT=${ICLOUD_TOTAL%%.*}
-if [ "$ICLOUD_INT" -gt 30 ]; then
-    printf "     ${WARN} ${YELLOW}iCloud${NC} syncing ${DIM}(${ICLOUD_TOTAL}%% total)${NC}\n"
-    printf "        ${DIM}${ARROW} Syncing files - check iCloud Drive status in Finder${NC}\n"
-    issues_found=$((issues_found + 1))
-elif [ "$ICLOUD_INT" -gt 5 ]; then
-    printf "     ${CHECK} ${GREEN}iCloud${NC} ${DIM}(${ICLOUD_TOTAL}%% - normal)${NC}\n"
-fi
-
-# Software Update (softwareupdated)
-UPDATE_CPU=$(ps aux | grep -E "[s]oftwareupdated" | awk '{print $3}' | head -1)
-if [ -n "$UPDATE_CPU" ]; then
-    UPDATE_INT=${UPDATE_CPU%%.*}
-    if [ "$UPDATE_INT" -gt 20 ]; then
-        printf "     ${WARN} ${YELLOW}Software Update${NC} checking ${DIM}(${UPDATE_CPU}%%)${NC}\n"
-        printf "        ${DIM}${ARROW} Checking for or downloading macOS updates${NC}\n"
-        issues_found=$((issues_found + 1))
-    fi
-fi
-
-# ---- Browsers ----
-echo ""
-printf "     ${DIM}── Browsers ──${NC}\n"
-
-# Check Brave Browser
-BRAVE_COUNT=$(ps aux | grep -i "[B]rave" | wc -l | xargs)
-BRAVE_TOTAL_CPU=$(ps aux | grep -i "[B]rave" | awk '{sum += $3} END {print sum+0}')
-if [ "$BRAVE_COUNT" -gt 0 ] && [ -n "$BRAVE_TOTAL_CPU" ]; then
-    BRAVE_INT=${BRAVE_TOTAL_CPU%%.*}
-    if [ "$BRAVE_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Brave${NC} using ${BOLD}${BRAVE_TOTAL_CPU}%%${NC} ${DIM}(${BRAVE_COUNT} processes)${NC}\n"
-        printf "        ${DIM}${ARROW} Too many tabs or heavy websites${NC}\n"
-        add_issue "Brave using ${BRAVE_TOTAL_CPU}% CPU" "Quit Brave Browser" "osascript -e 'quit app \"Brave Browser\"' && echo 'Brave closed'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Brave${NC} ${DIM}(${BRAVE_TOTAL_CPU}%% across ${BRAVE_COUNT} tabs)${NC}\n"
-    fi
-fi
-
-# Check Chrome
-CHROME_COUNT=$(ps aux | grep -i "[G]oogle Chrome" | wc -l | xargs)
-CHROME_TOTAL_CPU=$(ps aux | grep -i "[G]oogle Chrome" | awk '{sum += $3} END {print sum+0}')
-if [ "$CHROME_COUNT" -gt 0 ] && [ -n "$CHROME_TOTAL_CPU" ]; then
-    CHROME_INT=${CHROME_TOTAL_CPU%%.*}
-    if [ "$CHROME_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Chrome${NC} using ${BOLD}${CHROME_TOTAL_CPU}%%${NC} ${DIM}(${CHROME_COUNT} processes)${NC}\n"
-        printf "        ${DIM}${ARROW} Too many tabs or extensions${NC}\n"
-        add_issue "Chrome using ${CHROME_TOTAL_CPU}% CPU" "Quit Chrome" "osascript -e 'quit app \"Google Chrome\"' && echo 'Chrome closed'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Chrome${NC} ${DIM}(${CHROME_TOTAL_CPU}%% across ${CHROME_COUNT} tabs)${NC}\n"
-    fi
-fi
-
-# Check Safari
-SAFARI_COUNT=$(ps aux | grep -i "[S]afari" | grep -v "SafariServices" | wc -l | xargs)
-SAFARI_TOTAL_CPU=$(ps aux | grep -i "[S]afari" | grep -v "SafariServices" | awk '{sum += $3} END {print sum+0}')
-if [ "$SAFARI_COUNT" -gt 0 ] && [ -n "$SAFARI_TOTAL_CPU" ]; then
-    SAFARI_INT=${SAFARI_TOTAL_CPU%%.*}
-    if [ "$SAFARI_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Safari${NC} using ${BOLD}${SAFARI_TOTAL_CPU}%%${NC} ${DIM}(${SAFARI_COUNT} processes)${NC}\n"
-        printf "        ${DIM}${ARROW} Heavy websites or too many tabs${NC}\n"
-        add_issue "Safari using ${SAFARI_TOTAL_CPU}% CPU" "Quit Safari" "osascript -e 'quit app \"Safari\"' && echo 'Safari closed'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Safari${NC} ${DIM}(${SAFARI_TOTAL_CPU}%% across ${SAFARI_COUNT} tabs)${NC}\n"
-    fi
-fi
-
-# Check Firefox
-FIREFOX_COUNT=$(ps aux | grep -i "[f]irefox" | wc -l | xargs)
-FIREFOX_TOTAL_CPU=$(ps aux | grep -i "[f]irefox" | awk '{sum += $3} END {print sum+0}')
-if [ "$FIREFOX_COUNT" -gt 0 ] && [ -n "$FIREFOX_TOTAL_CPU" ]; then
-    FIREFOX_INT=${FIREFOX_TOTAL_CPU%%.*}
-    if [ "$FIREFOX_INT" -gt 100 ]; then
-        printf "     ${WARN} ${YELLOW}Firefox${NC} using ${BOLD}${FIREFOX_TOTAL_CPU}%%${NC} ${DIM}(${FIREFOX_COUNT} processes)${NC}\n"
-        printf "        ${DIM}${ARROW} Too many tabs or heavy websites${NC}\n"
-        add_issue "Firefox using ${FIREFOX_TOTAL_CPU}% CPU" "Quit Firefox" "osascript -e 'quit app \"Firefox\"' && echo 'Firefox closed'"
-        issues_found=$((issues_found + 1))
-    else
-        printf "     ${CHECK} ${GREEN}Firefox${NC} ${DIM}(${FIREFOX_TOTAL_CPU}%% across ${FIREFOX_COUNT} tabs)${NC}\n"
-    fi
-fi
-
-# ---- High CPU Process Detection ----
-echo ""
-printf "     ${DIM}── Other High CPU Processes ──${NC}\n"
-
-# Known processes we already checked (to avoid duplicates)
-KNOWN_PROCS="kernel_task|WindowServer|DisplaysExt|corespotlightd|mds|mdworker|mds_stores|backupd|photolibraryd|photoanalysisd|cloudd|bird|softwareupdated|Brave|Chrome|Safari|Firefox|Google|healthcheck"
-
-# Find any process using >50% CPU that we haven't already checked
-HIGH_CPU_FOUND=0
-while IFS= read -r proc_line; do
-    [ -z "$proc_line" ] && continue
-
-    cpu=$(echo "$proc_line" | awk '{print $1}')
-    pid=$(echo "$proc_line" | awk '{print $2}')
-    proc=$(echo "$proc_line" | awk '{print $3}')
-
-    # Skip if not numeric
-    case "$cpu" in
-        [0-9]*) ;;
-        *) continue ;;
-    esac
-
-    cpu_int=${cpu%%.*}
-
-    # Skip if not high CPU (>50%)
-    [ "$cpu_int" -lt 50 ] && continue
-
-    # Skip known processes
-    if echo "$proc" | grep -qE "$KNOWN_PROCS"; then
-        continue
-    fi
-
-    HIGH_CPU_FOUND=1
-    runtime=$(get_runtime "$pid")
-
-    printf "     ${CROSS} ${RED}${proc}${NC} using ${BOLD}${cpu}%%${NC} CPU ${DIM}(PID: ${pid}, running: ${runtime})${NC}\n"
-
-    # Identify common process types
-    case "$proc" in
-        *node*|*npm*|*yarn*)
-            printf "        ${DIM}${ARROW} Node.js process - possibly a dev server or build${NC}\n"
-            ;;
-        *python*|*Python*)
-            printf "        ${DIM}${ARROW} Python script running${NC}\n"
-            ;;
-        *ruby*|*Ruby*)
-            printf "        ${DIM}${ARROW} Ruby process${NC}\n"
-            ;;
-        *java*|*Java*)
-            printf "        ${DIM}${ARROW} Java application${NC}\n"
-            ;;
-        *Electron*|*Helper*)
-            printf "        ${DIM}${ARROW} Electron app helper (VS Code, Slack, Discord, etc.)${NC}\n"
-            ;;
-        *Xcode*|*SourceKit*|*clang*)
-            printf "        ${DIM}${ARROW} Xcode/compiler process - building code${NC}\n"
-            ;;
-        *docker*|*Docker*)
-            printf "        ${DIM}${ARROW} Docker container or daemon${NC}\n"
-            ;;
-        *Teams*|*Slack*|*Discord*|*Zoom*)
-            printf "        ${DIM}${ARROW} Communication app - try closing if not in use${NC}\n"
-            ;;
-        *Figma*|*Sketch*|*Photoshop*|*Illustrator*)
-            printf "        ${DIM}${ARROW} Design app - heavy graphics processing${NC}\n"
-            ;;
-        *)
-            full_path=$(ps -o command= -p "$pid" 2>/dev/null | head -c 60)
-            if [ -n "$full_path" ]; then
-                printf "        ${DIM}${ARROW} ${full_path}...${NC}\n"
+        # Check if etime is > 2 hours
+        # Format: [[dd-]hh:]mm:ss
+        local is_idle=0
+        if [[ "$etime" == *-* ]]; then # Days present
+            is_idle=1
+        else
+            local hours=$(echo "$etime" | awk -F: '{if (NF==3) print $1; else print 0}')
+            if [ "$hours" -ge 2 ]; then
+                is_idle=1
             fi
-            ;;
-    esac
+        fi
 
-    # Add fix option to kill the process
-    add_issue "${proc} using ${cpu}% CPU (PID: ${pid})" "Kill ${proc} process" "kill ${pid} 2>/dev/null && echo '${proc} terminated' || echo 'Process already ended or requires sudo'"
-    issues_found=$((issues_found + 1))
-
-done < <(ps -arcwwxo pcpu,pid,comm 2>/dev/null | tail -n +2 | head -20)
-
-if [ "$HIGH_CPU_FOUND" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No other high-CPU processes detected${NC}\n"
-fi
-
-echo ""
-line
-
-# ============ PROBLEM PROCESSES ============
-echo ""
-printf "  ${BOLD}${WHITE}👻 PROBLEM PROCESSES${NC}\n"
-echo ""
-
-# ---- Zombie Processes ----
-printf "     ${DIM}── Zombie Processes ──${NC}\n"
-ZOMBIE_COUNT=0
-while IFS= read -r zombie_line; do
-    [ -z "$zombie_line" ] && continue
-    ZOMBIE_COUNT=$((ZOMBIE_COUNT + 1))
-
-    pid=$(echo "$zombie_line" | awk '{print $1}')
-    ppid=$(echo "$zombie_line" | awk '{print $2}')
-    proc=$(echo "$zombie_line" | awk '{print $3}')
-
-    printf "     ${CROSS} ${RED}Zombie:${NC} %s ${DIM}(PID: %s, Parent: %s)${NC}\n" "$proc" "$pid" "$ppid"
-
-    # Get parent process name
-    parent_name=$(ps -o comm= -p "$ppid" 2>/dev/null)
-    if [ -n "$parent_name" ]; then
-        printf "        ${DIM}${ARROW} Parent process: %s${NC}\n" "$parent_name"
-        add_issue "Zombie process: ${proc} (PID: ${pid})" "Kill parent process ${parent_name}" "kill -9 ${ppid} 2>/dev/null && echo 'Parent process killed, zombie should be cleaned up' || echo 'Could not kill parent'"
-    fi
-    issues_found=$((issues_found + 1))
-done < <(ps aux | awk '$8 ~ /Z/ {print $2, $3, $11}' 2>/dev/null)
-
-if [ "$ZOMBIE_COUNT" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No zombie processes${NC}\n"
-fi
-
-# ---- Not Responding Apps ----
-echo ""
-printf "     ${DIM}── Not Responding Apps ──${NC}\n"
-HUNG_FOUND=0
-
-# Use lsappinfo to find hung apps (macOS specific)
-if command -v lsappinfo &>/dev/null; then
-    while IFS= read -r app_line; do
-        [ -z "$app_line" ] && continue
-
-        app_name=$(echo "$app_line" | sed 's/"//g' | xargs)
-        [ -z "$app_name" ] && continue
-
-        # Check if app is not responding using AppleScript
-        is_hung=$(osascript -e "tell application \"System Events\" to set appList to name of every application process whose background only is false" 2>/dev/null | grep -c "$app_name" || echo "0")
-
-        HUNG_FOUND=1
-        printf "     ${CROSS} ${RED}Not Responding:${NC} %s\n" "$app_name"
-        printf "        ${DIM}${ARROW} App is hung or frozen${NC}\n"
-        add_issue "${app_name} not responding" "Force quit ${app_name}" "osascript -e 'quit app \"${app_name}\"' 2>/dev/null || killall \"${app_name}\" 2>/dev/null && echo '${app_name} force quit' || echo 'Could not quit app'"
-        issues_found=$((issues_found + 1))
-    done < <(lsappinfo list | grep -B5 "ApplicationType.*Foreground" | grep "not responding" | awk -F'"' '{print $2}' 2>/dev/null)
-fi
-
-# Alternative: check for apps using SIGINFO that don't respond
-# This finds GUI apps that might be hung by checking if they have high CPU but no recent activity
-while IFS= read -r proc_line; do
-    [ -z "$proc_line" ] && continue
-
-    pid=$(echo "$proc_line" | awk '{print $1}')
-    cpu=$(echo "$proc_line" | awk '{print $2}')
-    mem=$(echo "$proc_line" | awk '{print $3}')
-    state=$(echo "$proc_line" | awk '{print $4}')
-    proc=$(echo "$proc_line" | awk '{print $5}')
-
-    # Skip if already found or not a GUI app indicator
-    case "$proc" in
-        *Helper*|*Agent*|*Daemon*|*Service*) continue ;;
-    esac
-
-    # Check for uninterruptible sleep state (U) which often indicates hung
-    if [[ "$state" == *"U"* ]]; then
-        HUNG_FOUND=1
-        printf "     ${WARN} ${YELLOW}Possibly hung:${NC} %s ${DIM}(state: uninterruptible)${NC}\n" "$proc"
-        printf "        ${DIM}${ARROW} Process in uninterruptible sleep - may be waiting on I/O${NC}\n"
-        add_issue "${proc} possibly hung (PID: ${pid})" "Force kill ${proc}" "kill -9 ${pid} 2>/dev/null && echo '${proc} killed' || echo 'Could not kill process'"
-        issues_found=$((issues_found + 1))
-    fi
-done < <(ps -axo pid,pcpu,pmem,state,comm 2>/dev/null | tail -n +2)
-
-if [ "$HUNG_FOUND" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No hung applications detected${NC}\n"
-fi
-
-# ---- Memory Hogs (High RAM, Low CPU) ----
-echo ""
-printf "     ${DIM}── Memory Hogs (idle but using RAM) ──${NC}\n"
-MEM_HOG_FOUND=0
-
-while IFS= read -r proc_line; do
-    [ -z "$proc_line" ] && continue
-
-    mem_mb=$(echo "$proc_line" | awk '{print $1}')
-    cpu=$(echo "$proc_line" | awk '{print $2}')
-    pid=$(echo "$proc_line" | awk '{print $3}')
-    proc=$(echo "$proc_line" | awk '{print $4}')
-
-    # Skip if not numeric
-    case "$mem_mb" in
-        [0-9]*) ;;
-        *) continue ;;
-    esac
-
-    cpu_int=${cpu%%.*}
-
-    # Memory hog: >500MB RAM but <5% CPU (idle but consuming memory)
-    if [ "$mem_mb" -gt 500 ] && [ "$cpu_int" -lt 5 ]; then
-        # Skip essential system processes
-        case "$proc" in
-            kernel_task|WindowServer|mds|mds_stores|Finder|Dock|SystemUIServer|loginwindow) continue ;;
-        esac
-
-        MEM_HOG_FOUND=1
-        printf "     ${WARN} ${YELLOW}%s${NC} using ${BOLD}%sMB${NC} RAM but only ${DIM}%s%% CPU${NC}\n" "$proc" "$mem_mb" "$cpu"
-        printf "        ${DIM}${ARROW} Idle app consuming memory${NC}\n"
-
-        # Try to get the app name for a cleaner quit
-        app_name=$(ps -o comm= -p "$pid" 2>/dev/null | xargs basename 2>/dev/null)
-        add_issue "${proc} using ${mem_mb}MB RAM (idle)" "Quit ${proc}" "osascript -e 'quit app \"${app_name}\"' 2>/dev/null || kill ${pid} 2>/dev/null && echo '${proc} closed' || echo 'Could not close'"
-        issues_found=$((issues_found + 1))
-    fi
-done < <(ps -axo rss,pcpu,pid,comm 2>/dev/null | tail -n +2 | awk '{print int($1/1024), $2, $3, $4}' | sort -rn | head -20)
-
-if [ "$MEM_HOG_FOUND" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No idle memory hogs detected${NC}\n"
-fi
-
-# ---- Idle Background Apps ----
-echo ""
-printf "     ${DIM}── Idle Background Apps ──${NC}\n"
-IDLE_FOUND=0
-
-# Find GUI apps that have been running for a while with minimal CPU
-while IFS= read -r proc_line; do
-    [ -z "$proc_line" ] && continue
-
-    etime=$(echo "$proc_line" | awk '{print $1}')
-    cpu=$(echo "$proc_line" | awk '{print $2}')
-    pid=$(echo "$proc_line" | awk '{print $3}')
-    proc=$(echo "$proc_line" | awk '{print $4}')
-
-    # Parse elapsed time - looking for apps running 2+ hours
-    hours=0
-    if [[ "$etime" == *"-"* ]]; then
-        # Format: days-HH:MM:SS - definitely old
-        hours=999
-    elif [[ "$etime" == *":"*":"* ]]; then
-        # Format: HH:MM:SS
-        hours=$(echo "$etime" | cut -d: -f1)
-    fi
-
-    cpu_int=${cpu%%.*}
-
-    # Skip if not old enough or using CPU
-    [ "$hours" -lt 2 ] && continue
-    [ "$cpu_int" -gt 1 ] && continue
-
-    # Only look at likely GUI apps (capitalized names, not helpers/daemons)
-    case "$proc" in
-        [A-Z]*)
-            # Skip essential apps and system processes
-            case "$proc" in
-                Finder|Dock|SystemUIServer|loginwindow|Spotlight|Safari|Terminal|iTerm*|Code|Cursor) continue ;;
-                *Helper|*Agent|*Daemon|*Service|*Worker) continue ;;
-            esac
-
-            IDLE_FOUND=1
-            printf "     ${WARN} ${YELLOW}%s${NC} idle for ${BOLD}%s${NC} ${DIM}(%s%% CPU)${NC}\n" "$proc" "$etime" "$cpu"
-            printf "        ${DIM}${ARROW} App running in background, not being used${NC}\n"
-            add_issue "${proc} idle for ${etime}" "Quit ${proc}" "osascript -e 'quit app \"${proc}\"' 2>/dev/null || kill ${pid} 2>/dev/null && echo '${proc} closed' || echo 'Could not close'"
-            issues_found=$((issues_found + 1))
-            ;;
-    esac
-done < <(ps -axo etime,pcpu,pid,comm 2>/dev/null | tail -n +2 | head -50)
-
-if [ "$IDLE_FOUND" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No idle background apps detected${NC}\n"
-fi
-
-# ---- Unnecessary Launch Agents ----
-echo ""
-printf "     ${DIM}── Unnecessary Launch Agents ──${NC}\n"
-AGENT_FOUND=0
-
-# Known bloatware/unnecessary launch agents
-declare -a KNOWN_BLOAT=(
-    "com.adobe.AdobeCreativeCloud"
-    "com.adobe.ccxprocess"
-    "com.adobe.CCLibrary"
-    "com.spotify.webhelper"
-    "com.google.keystone"
-    "com.microsoft.update"
-    "com.oracle.java"
-    "com.McAfee"
-    "com.symantec"
-    "com.norton"
-    "com.avast"
-    "com.avg"
-    "com.mackeeper"
-    "com.zeobit"
-    "com.pckeeper"
-    "com.cleanmymac"
-    "com.macpaw"
-)
-
-# Check user launch agents
-for agent_file in ~/Library/LaunchAgents/*.plist 2>/dev/null; do
-    [ -f "$agent_file" ] || continue
-
-    agent_name=$(basename "$agent_file" .plist)
-
-    # Check if it's known bloatware
-    for bloat in "${KNOWN_BLOAT[@]}"; do
-        if [[ "$agent_name" == *"$bloat"* ]]; then
-            AGENT_FOUND=1
-
-            # Check if it's currently loaded
-            is_loaded=$(launchctl list 2>/dev/null | grep -c "$agent_name" || echo "0")
-            if [ "$is_loaded" -gt 0 ]; then
-                status="running"
-                printf "     ${WARN} ${YELLOW}%s${NC} ${DIM}(running)${NC}\n" "$agent_name"
-            else
-                status="installed"
-                printf "     ${DOT} ${DIM}%s (installed but not running)${NC}\n" "$agent_name"
+        if [ "$is_idle" -eq 1 ]; then
+            local pcpu_int=$(safe_int "$pcpu")
+            # Skip processes with 0.0% CPU usage
+            if [ "$pcpu_int" -lt 1 ] && [ "$(echo "$pcpu > 0" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then
+                # Skip essential system processes or those that are likely not "apps" in the traditional sense
+                local proc_name=$(basename "$comm")
+                if [[ "$comm" == "/Applications/"* ]] || [[ "$comm" == *".app/"* ]]; then
+                    idle_apps_found=1
+                    printf "     ${WARN} ${YELLOW}Idle App:${NC} %s ${DIM}(Running: %s, CPU: %s%%)${NC}\n" "$proc_name" "$etime" "$pcpu"
+                    add_issue "Idle background app: ${proc_name}" "Quit idle app ${proc_name}" "kill ${pid}"
+                fi
             fi
+        fi
+    done < <(ps -axo pid,pcpu,etime,comm | awk 'NR>1 {print $1, $2, $3, $4}')
+    [ "$idle_apps_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No idle background apps detected${NC}\n"
+}
 
-            printf "        ${DIM}${ARROW} Unnecessary background service${NC}\n"
-            add_issue "Launch agent: ${agent_name}" "Disable ${agent_name}" "launchctl unload -w '${agent_file}' 2>/dev/null && echo '${agent_name} disabled' || echo 'Could not disable (may need manual removal)'"
-            issues_found=$((issues_found + 1))
-            break
+detect_resource_heavy_agents() {
+    # Resource-heavy Agents (>10% CPU or >5% memory)
+    echo ""; printf "     ${DIM}── Resource-heavy Agents ──${NC}\n"
+    local heavy_agents_found=0
+    while read -r pid pcpu rss comm; do
+        [ -z "$pid" ] && continue
+
+        # Only check agents/daemons
+        if [[ "$comm" == *"LaunchAgents"* ]] || [[ "$comm" == *"LaunchDaemons"* ]] || [[ "$comm" == *"/usr/libexec/"* ]]; then
+            # Filter out some very common system processes that might spike but are usually fine
+            [[ "$comm" == *"kernel_task"* ]] && continue
+            [[ "$comm" == *"WindowServer"* ]] && continue
+
+            local pcpu_int=$(safe_int "$pcpu")
+            local total_mem_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}')
+            local rss_mb=$((rss / 1024))
+            local mem_percent=$((total_mem_mb > 0 ? rss_mb * 100 / total_mem_mb : 0))
+
+            if [ "$pcpu_int" -gt 10 ] || [ "$mem_percent" -gt 5 ]; then
+                heavy_agents_found=1
+                local proc_name=$(basename "$comm")
+                printf "     ${CROSS} ${RED}Heavy Agent:${NC} %s ${DIM}(CPU: %s%%, Mem: %s%%)${NC}\n" "$proc_name" "$pcpu" "$mem_percent"
+                add_issue "Resource-heavy agent: ${proc_name}" "Kill agent ${proc_name}" "kill -9 ${pid}"
+            fi
+        fi
+    done < <(ps -axo pid,pcpu,rss,comm | awk 'NR>1 {print $1, $2, $3, $4}')
+    [ "$heavy_agents_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No resource-heavy agents detected${NC}\n"
+}
+
+detect_bloatware() {
+    echo ""; printf "     ${DIM}── Bloatware Agents ──${NC}\n"
+    local bloatware_found=0
+    for agent in "${BLOATWARE_LIST[@]}"; do
+        if launchctl list 2>/dev/null | grep -q "$agent"; then
+            bloatware_found=1
+            printf "     ${WARN} ${YELLOW}3rd party bloatware:${NC} %s\n" "$agent"
+            add_issue "3rd party bloatware agent detected: ${agent}" "Disable agent ${agent}" "launchctl bootout gui/$(id -u)/${agent} 2>/dev/null; launchctl disable gui/$(id -u)/${agent} 2>/dev/null"
         fi
     done
-done
-
-# Check for high-resource launch agents currently running
-while IFS= read -r agent_line; do
-    [ -z "$agent_line" ] && continue
-
-    pid=$(echo "$agent_line" | awk '{print $1}')
-    cpu=$(echo "$agent_line" | awk '{print $2}')
-    mem=$(echo "$agent_line" | awk '{print $3}')
-    proc=$(echo "$agent_line" | awk '{print $4}')
-
-    # Skip if not numeric or low resource
-    case "$cpu" in
-        [0-9]*) ;;
-        *) continue ;;
-    esac
-
-    cpu_int=${cpu%%.*}
-    mem_int=${mem%%.*}
-
-    # Flag agents using significant resources
-    if [ "$cpu_int" -gt 10 ] || [ "$mem_int" -gt 5 ]; then
-        case "$proc" in
-            *Agent*|*Helper*|*Daemon*)
-                # Skip known good agents
-                case "$proc" in
-                    UserEventAgent|CalendarAgent|ContactsAgent|SafariBookmarksSyncAgent) continue ;;
-                    CommCenter|cloudd|nsurlsessiond|trustd) continue ;;
-                esac
-
-                AGENT_FOUND=1
-                printf "     ${WARN} ${YELLOW}%s${NC} using ${BOLD}%s%% CPU / %s%% MEM${NC}\n" "$proc" "$cpu" "$mem"
-                printf "        ${DIM}${ARROW} Background agent consuming resources${NC}\n"
-                add_issue "${proc} using resources" "Kill ${proc}" "killall '${proc}' 2>/dev/null && echo '${proc} killed' || echo 'Could not kill'"
-                issues_found=$((issues_found + 1))
-                ;;
-        esac
-    fi
-done < <(ps -axo pid,pcpu,pmem,comm 2>/dev/null | tail -n +2)
-
-if [ "$AGENT_FOUND" -eq 0 ]; then
-    printf "     ${CHECK} ${GREEN}No unnecessary launch agents detected${NC}\n"
-fi
-
-echo ""
-line
-
-# ============ MEMORY ============
-echo ""
-printf "  ${BOLD}${WHITE}🧠 MEMORY STATUS${NC}\n"
-echo ""
-
-# Get memory info
-page_size=$(vm_stat | grep "page size" | awk '{print $8}')
-pages_free=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
-pages_active=$(vm_stat | grep "Pages active" | awk '{print $3}' | tr -d '.')
-pages_inactive=$(vm_stat | grep "Pages inactive" | awk '{print $3}' | tr -d '.')
-pages_wired=$(vm_stat | grep "Pages wired" | awk '{print $4}' | tr -d '.')
-pages_compressed=$(vm_stat | grep "Pages occupied by compressor" | awk '{print $5}' | tr -d '.')
-
-free_mb=$((pages_free * page_size / 1048576))
-active_mb=$((pages_active * page_size / 1048576))
-inactive_mb=$((pages_inactive * page_size / 1048576))
-wired_mb=$((pages_wired * page_size / 1048576))
-compressed_mb=$((pages_compressed * page_size / 1048576))
-total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}')
-used_mb=$((active_mb + wired_mb + compressed_mb))
-
-if [ -n "$total_mb" ] && [ "$total_mb" -gt 0 ]; then
-    mem_percent=$((used_mb * 100 / total_mb))
-else
-    mem_percent=0
-fi
-
-# Memory bar
-mem_filled=$((mem_percent * bar_width / 100))
-mem_empty=$((bar_width - mem_filled))
-
-if [ "$mem_percent" -gt 85 ]; then
-    mem_color=$RED
-    mem_status="${WARN} ${YELLOW}Memory pressure is high${NC}"
-    add_issue "Memory usage at ${mem_percent}%" "Purge inactive memory (safe operation)" "sudo purge && echo 'Memory purged successfully'"
-elif [ "$mem_percent" -gt 70 ]; then
-    mem_color=$YELLOW
-    mem_status="${CHECK} ${GREEN}Memory usage is moderate${NC}"
-else
-    mem_color=$GREEN
-    mem_status="${CHECK} ${GREEN}Plenty of memory available${NC}"
-fi
-
-printf "     ${mem_status}\n\n"
-
-# Format memory sizes nicely
-format_mem() {
-    if [ "$1" -gt 1024 ]; then
-        printf "%.1fGB" $(echo "$1" | awk '{printf "%.1f", $1/1024}')
-    else
-        printf "%dMB" "$1"
-    fi
+    [ "$bloatware_found" -eq 0 ] && printf "     ${CHECK} ${GREEN}No bloatware agents detected${NC}\n"
 }
 
-printf "     Used: ${BOLD}$(format_mem $used_mb)${NC} / $(format_mem $total_mb)\n"
-printf "     ${GRAY}[${NC}${mem_color}"
-printf '%.0s█' $(seq 1 $mem_filled 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}"
-printf '%.0s░' $(seq 1 $mem_empty 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}]${NC} ${mem_percent}%%\n\n"
 
-printf "     ${DIM}Active: $(format_mem $active_mb)  •  Wired: $(format_mem $wired_mb)  •  Free: $(format_mem $free_mb)${NC}\n"
-echo ""
-line
+detect_hung_processes() {
+    echo ""; printf "     ${DIM}── Not Responding Apps ──${NC}\n"
+    local hung=0
+    if command -v lsappinfo &>/dev/null; then
+        while read -r app; do
+            [ -z "$app" ] && continue
+            hung=1
+            printf "     ${CROSS} ${RED}Not Responding:${NC} %s\n" "$app"
+            add_issue "${app} not responding" "Force quit ${app}" "killall \"$app\""
+        done < <(lsappinfo list | grep -B5 "not responding" | awk -F'"' '{print $2}')
+    fi
+    [ "$hung" -eq 0 ] && printf "     ${CHECK} ${GREEN}No hung applications detected${NC}\n"
 
-# ============ DISK SPACE ============
-echo ""
-printf "  ${BOLD}${WHITE}💾 STORAGE${NC}\n"
-echo ""
+    echo ""
+}
 
-disk_info=$(df -h / | tail -1)
-disk_used=$(echo "$disk_info" | awk '{print $3}')
-disk_total=$(echo "$disk_info" | awk '{print $2}')
-disk_avail=$(echo "$disk_info" | awk '{print $4}')
-disk_percent=$(echo "$disk_info" | awk '{print $5}' | tr -d '%')
 
-# Disk bar
-disk_filled=$((disk_percent * bar_width / 100))
-disk_empty=$((bar_width - disk_filled))
+check_problem_processes() {
+    print_section_header "👻 PROBLEM PROCESSES"
 
-if [ "$disk_percent" -gt 90 ]; then
-    disk_color=$RED
-    disk_status="${CROSS} ${RED}Storage is almost full!${NC}"
-    disk_tip="${DIM}${ARROW} Free up space by emptying Trash and removing unused apps${NC}"
-    # Add multiple storage cleanup options
-    # Calculate sizes first for user awareness
-    trash_size=$(du -sh ~/.Trash 2>/dev/null | awk '{print $1}' || echo "unknown")
-    cache_size=$(du -sh ~/Library/Caches 2>/dev/null | awk '{print $1}' || echo "unknown")
-    add_issue "Storage ${disk_percent}% full (only ${disk_avail} free)" "Empty Trash (~${trash_size})" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
-    add_issue "Storage cleanup" "Clear user cache files (~${cache_size})" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
-    add_issue "Storage cleanup" "Clear system logs (requires password)" "sudo rm -rf /private/var/log/asl/*.asl 2>/dev/null && sudo rm -rf /Library/Logs/* 2>/dev/null && echo 'System logs cleared'"
-    add_issue "Storage cleanup" "Clear Xcode derived data (if installed)" "rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null && echo 'Xcode derived data cleared'"
-    # NOTE: iOS backups intentionally NOT included - too risky to delete phone backups
-    add_issue "Storage cleanup" "Clear Docker unused data (if installed)" "docker system prune -af 2>/dev/null && echo 'Docker cleaned' || echo 'Docker not installed'"
-    add_issue "Storage cleanup" "Show large files in Downloads" "echo 'Large files in Downloads:' && find ~/Downloads -type f -size +100M -exec ls -lh {} \\; 2>/dev/null | awk '{print \$5, \$9}' | head -10"
-elif [ "$disk_percent" -gt 75 ]; then
-    disk_color=$YELLOW
-    disk_status="${WARN} ${YELLOW}Storage is getting full${NC}"
-    disk_tip="${DIM}${ARROW} Consider cleaning up old files soon${NC}"
-    # Calculate sizes for user awareness
-    trash_size=$(du -sh ~/.Trash 2>/dev/null | awk '{print $1}' || echo "unknown")
-    cache_size=$(du -sh ~/Library/Caches 2>/dev/null | awk '{print $1}' || echo "unknown")
-    add_issue "Storage ${disk_percent}% full" "Empty Trash (~${trash_size})" "rm -rf ~/.Trash/* 2>/dev/null && echo 'Trash emptied'"
-    add_issue "Storage cleanup" "Clear user cache files (~${cache_size})" "rm -rf ~/Library/Caches/* 2>/dev/null && echo 'User caches cleared'"
-else
-    disk_color=$GREEN
-    disk_status="${CHECK} ${GREEN}Plenty of storage available${NC}"
-    disk_tip=""
-fi
+    detect_zombies
+    detect_memory_hogs
+    detect_idle_bg_apps
+    detect_resource_heavy_agents
+    detect_bloatware
+    detect_hung_processes
 
-printf "     ${disk_status}\n"
-if [ -n "$disk_tip" ]; then
-    printf "        ${disk_tip}\n"
-fi
-printf "\n     Used: ${BOLD}${disk_used}${NC} / ${disk_total} ${DIM}(${disk_avail} available)${NC}\n"
-printf "     ${GRAY}[${NC}${disk_color}"
-printf '%.0s█' $(seq 1 $disk_filled 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}"
-printf '%.0s░' $(seq 1 $disk_empty 2>/dev/null) 2>/dev/null || printf ""
-printf "${GRAY}]${NC} ${disk_percent}%%\n"
-echo ""
-line
+    line
+}
 
-# ============ OVERALL GRADE ============
-echo ""
 
-# Calculate overall score
-score=100
+check_memory() {
+    print_section_header "🧠 MEMORY STATUS"
+    
+    local page_size=$(vm_stat | grep "page size" | awk '{print $8}')
+    local pages_free=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
+    local pages_active=$(vm_stat | grep "Pages active" | awk '{print $3}' | tr -d '.')
+    local pages_wired=$(vm_stat | grep "Pages wired" | awk '{print $4}' | tr -d '.')
+    local pages_compressed=$(vm_stat | grep "Pages occupied by compressor" | awk '{print $5}' | tr -d '.')
 
-# Deduct for high load
-if [ "$LOAD_INT" -gt "$CORES" ]; then
-    score=$((score - 20))
-elif [ "$LOAD_INT" -gt $((CORES / 2)) ]; then
-    score=$((score - 10))
-fi
+    local free_mb=$((pages_free * page_size / 1048576))
+    local active_mb=$((pages_active * page_size / 1048576))
+    local wired_mb=$((pages_wired * page_size / 1048576))
+    local compressed_mb=$((pages_compressed * page_size / 1048576))
+    local total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}')
+    local used_mb=$((active_mb + wired_mb + compressed_mb))
+    
+    MEM_PERCENT=$((total_mb > 0 ? used_mb * 100 / total_mb : 0))
+    local color=$GREEN
+    local status="${CHECK} ${GREEN}Plenty of memory available${NC}"
 
-# Deduct for memory pressure
-if [ "$mem_percent" -gt 85 ]; then
-    score=$((score - 20))
-elif [ "$mem_percent" -gt 70 ]; then
-    score=$((score - 10))
-fi
+    if [ "$MEM_PERCENT" -gt $MEMORY_CRITICAL ]; then
+        color=$RED; status="${WARN} ${YELLOW}Memory pressure is high${NC}"
+        add_issue "Memory usage high" "Purge memory" "sudo purge"
+    elif [ "$MEM_PERCENT" -gt $MEMORY_WARNING ]; then
+        color=$YELLOW; status="${CHECK} ${GREEN}Memory usage is moderate${NC}"
+    fi
 
-# Deduct for disk usage
-if [ "$disk_percent" -gt 90 ]; then
-    score=$((score - 25))
-elif [ "$disk_percent" -gt 75 ]; then
-    score=$((score - 10))
-fi
+    printf "     ${status}\n\n"
+    printf "     Used: ${BOLD}$(format_mem $used_mb)${NC} / $(format_mem $total_mb)\n"
+    draw_bar "$MEM_PERCENT" "$color"
+    echo ""
+    printf "     ${DIM}Active: $(format_mem $active_mb)  •  Wired: $(format_mem $wired_mb)  •  Free: $(format_mem $free_mb)${NC}\n"
+    echo ""; line
+}
 
-# Deduct for issues
-score=$((score - issues_found * 5))
 
-if [ "$score" -lt 0 ]; then score=0; fi
+check_storage() {
+    print_section_header "💾 STORAGE"
+    
+    local disk_info=$(df -hc / 2>/dev/null | tail -1)
+    local used=$(echo "$disk_info" | awk '{print $3}')
+    local total=$(echo "$disk_info" | awk '{print $2}')
+    local avail=$(echo "$disk_info" | awk '{print $4}')
+    DISK_PERCENT=$(echo "$disk_info" | awk '{print $5}' | tr -d '%')
 
-# Determine grade
-if [ "$score" -ge 90 ]; then
-    grade="A"
-    grade_color=$GREEN
-    grade_emoji="🌟"
-    grade_msg="Excellent! Your Mac is running great!"
-elif [ "$score" -ge 80 ]; then
-    grade="B"
-    grade_color=$GREEN
-    grade_emoji="👍"
-    grade_msg="Good! Your Mac is healthy."
-elif [ "$score" -ge 70 ]; then
-    grade="C"
-    grade_color=$YELLOW
-    grade_emoji="👌"
-    grade_msg="Fair. Some areas could use attention."
-elif [ "$score" -ge 60 ]; then
-    grade="D"
-    grade_color=$YELLOW
-    grade_emoji="⚡"
-    grade_msg="Needs attention. Check the issues above."
-else
-    grade="F"
-    grade_color=$RED
-    grade_emoji="🔧"
-    grade_msg="Critical! Your Mac needs some care."
-fi
+    local color=$GREEN
+    local status="${CHECK} ${GREEN}Plenty of storage available${NC}"
 
-printf "  ${BOLD}${WHITE}📋 OVERALL HEALTH${NC}\n"
-echo ""
-printf "     ${grade_emoji}  ${BOLD}${grade_color}Grade: ${grade}${NC}  ${DIM}(Score: ${score}/100)${NC}\n"
-printf "     ${grade_msg}\n"
-echo ""
-double_line
+    local trash_size_bytes=$(du -sk ~/.Trash 2>/dev/null | awk '{print $1}')
+    local trash_size=$((trash_size_bytes / 1024))
+    local trash_size_units="MB"
+    if [ "$trash_size" -ge 1024 ]; then
+        trash_size=$((trash_size / 1024))
+        trash_size_units="GB"
+    fi
 
-# ============ FIX MODE ============
-if [ ${#ISSUES[@]} -gt 0 ]; then
+    local cache_size_bytes=$(du -sk ~/Library/Caches 2>/dev/null | awk '{print $1}')
+    local cache_size_mb=$((cache_size_bytes / 1024))
+
+    if [ "$DISK_PERCENT" -gt $DISK_CRITICAL ]; then
+        color=$RED; status="${CROSS} ${RED}Storage is almost full!${NC}"
+
+        if [ "$trash_size" -gt 0 ]; then
+            add_issue "Empty Trash (${trash_size}${trash_size_units})" "Empty Trash" "osascript -e 'tell application \"Finder\" to empty trash' 2>/dev/null; true"
+        fi
+
+        if [ "$cache_size_mb" -gt 0 ]; then
+            local cache_size_units="MB"
+            local cache_size=$cache_size_mb
+            if [ "$cache_size_mb" -ge 1024 ]; then
+                cache_size=$((cache_size_mb / 1024))
+                cache_size_units="GB"
+            fi
+            add_issue "Clear caches (${cache_size}${cache_size_units})" "Clear user caches" "find ~/Library/Caches -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null; true"
+        fi
+
+        add_issue "Storage cleanup" "Clear system logs" "sudo rm -rf /private/var/log/*.log 2>/dev/null; true"
+    elif [ "$DISK_PERCENT" -gt $DISK_WARNING ]; then
+        color=$YELLOW; status="${WARN} ${YELLOW}Storage is getting full${NC}"
+
+        if [ "$trash_size" -gt 1024 ]; then
+            add_issue "Empty Trash (${trash_size}${trash_size_units})" "Empty Trash" "osascript -e 'tell application \"Finder\" to empty trash' 2>/dev/null; true"
+        fi
+
+        if [ "$cache_size_mb" -gt 0 ]; then
+            local cache_size_units="MB"
+            local cache_size=$cache_size_mb
+            if [ "$cache_size_mb" -ge 1024 ]; then
+                cache_size=$((cache_size_mb / 1024))
+                cache_size_units="GB"
+            fi
+            add_issue "Clear caches (${cache_size}${cache_size_units})" "Clear user caches" "find ~/Library/Caches -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null; true"
+        fi
+    fi
+
+    printf "     ${status}\n\n"
+    printf "     Used: ${BOLD}${used}${NC} / ${total} ${DIM}(${avail} available)${NC}\n"
+    draw_bar "$DISK_PERCENT" "$color"
+    echo ""; line
+}
+
+
+
+check_launch_agents() {
+    print_section_header "🚀 LAUNCH AGENTS & DAEMONS"
+
+    local issues_found=0
+
+    # Check for failed user agents
+    printf "     ${DIM}── User Launch Agents ──${NC}\n"
+
+    local failed_agents=$(launchctl list 2>/dev/null | awk 'NR>1 && $1 == "-" && $2 != "0" && $2 != "-" && $3 !~ /^com\.apple\./ {printf "%s:%s\n", $3, $2}')
+
+    if [ -n "$failed_agents" ]; then
+        while IFS=: read -r label status; do
+            [ -z "$label" ] && continue
+            printf "     ${CROSS} ${RED}Failed:${NC} %s ${DIM}(exit: %s)${NC}\n" "$label" "$status"
+            add_issue "Launch agent failed: ${label}" "Restart ${label}" "launchctl kickstart -k gui/\$(id -u)/${label} 2>/dev/null || true"
+            issues_found=$((issues_found + 1))
+        done <<< "$failed_agents"
+    else
+        printf "     ${CHECK} ${GREEN}All user agents running normally${NC}\n"
+    fi
+
+    # Show count of running agents
+    local running_count=$(launchctl list 2>/dev/null | awk 'NR>1 && $1 != "-" && $1 ~ /^[0-9]+$/' | wc -l | xargs)
+    printf "     ${DIM}(${running_count} agents currently running)${NC}\n"
+
+    # Check for recently crashed processes
+    echo ""; printf "     ${DIM}── Recently Crashed ──${NC}\n"
+    local crash_logs=$(find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports -type f \( -name "*.crash" -o -name "*.panic" -o -name "*.ips" \) -mtime -1 2>/dev/null | head -5)
+
+    if [ -n "$crash_logs" ]; then
+        echo "$crash_logs" | while read -r log; do
+            [ -z "$log" ] && continue
+            local basename=$(basename "$log" | sed 's/\.[^.]*$//' | sed 's/-[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-[0-9]*$//')
+            printf "     ${WARN} ${YELLOW}Crash:${NC} %s ${DIM}(last 24h)${NC}\n" "$basename"
+            issues_found=$((issues_found + 1))
+        done
+    else
+        printf "     ${CHECK} ${GREEN}No recent crashes detected${NC}\n"
+    fi
+
+    # Check for disabled agents that might need attention
+    echo ""; printf "     ${DIM}── Disabled Agents ──${NC}\n"
+    local disabled_count=0
+    if [ -d ~/Library/LaunchAgents ]; then
+        for plist in $(~/Library/LaunchAgents/*.plist 2>/dev/null); do
+            [ ! -f "$plist" ] && continue
+            local label=$(basename "$plist" .plist)
+            if ! launchctl list 2>/dev/null | grep -q "$label"; then
+                if [ "$disabled_count" -lt 3 ]; then
+                    printf "     ${DOT} ${DIM}Not loaded: %s${NC}\n" "$label"
+                fi
+                disabled_count=$((disabled_count + 1))
+            fi
+        done
+    fi
+
+    if [ "$disabled_count" -eq 0 ]; then
+        printf "     ${CHECK} ${GREEN}All configured agents are loaded${NC}\n"
+    elif [ "$disabled_count" -gt 3 ]; then
+        printf "     ${DIM}... and %d more not loaded${NC}\n" "$((disabled_count - 3))"
+    fi
+
+    echo ""
+    line
+}
+
+
+calculate_grade() {
+    local score=$SCORE_MAX
+    [ "$LOAD_INT" -gt "$CORES" ] && score=$((score - SCORE_LOAD_PENALTY))
+    [ "$MEM_PERCENT" -gt $MEMORY_CRITICAL ] && score=$((score - SCORE_MEM_PENALTY))
+
+    if [ "$DISK_PERCENT" -gt $DISK_CRITICAL ]; then
+        score=$((score - SCORE_DISK_PENALTY))
+    elif [ "$DISK_PERCENT" -gt $DISK_WARNING ]; then
+        score=$((score - SCORE_DISK_PENALTY / 2))
+    fi
+
+    score=$((score - issue_count * SCORE_ISSUE_PENALTY))
+    [ "$score" -lt 0 ] && score=0
+
+    local grade="F" color=$RED emoji="🔧" msg="Critical! Your Mac needs care."
+    if [ "$score" -ge $GRADE_A_THRESHOLD ]; then
+        grade="A"; color=$GREEN; emoji="🌟"; msg="Excellent! Your Mac is running great!"
+    elif [ "$score" -ge $GRADE_B_THRESHOLD ]; then
+        grade="B"; color=$GREEN; emoji="👍"; msg="Good! Your Mac is healthy."
+    elif [ "$score" -ge $GRADE_C_THRESHOLD ]; then
+        grade="C"; color=$YELLOW; emoji="👌"; msg="Fair. Some areas could use attention."
+    elif [ "$score" -ge $GRADE_D_THRESHOLD ]; then
+        grade="D"; color=$YELLOW; emoji="⚡"; msg="Needs attention. Check issues."
+    fi
+
+    echo ""
+    printf "  ${BOLD}${WHITE}📋 OVERALL HEALTH${NC}\n"
+    echo ""
+    printf "     ${emoji}  ${BOLD}${color}Grade: ${grade}${NC}  ${DIM}(Score: ${score}/100)${NC}\n"
+    printf "     ${msg}\n"
+    echo ""
+    double_line
+    
+    [ "$grade" = "F" ] && return 1 || return 0
+}
+
+
+run_fixes() {
+    [ ${#ISSUES[@]} -eq 0 ] && return
+
     echo ""
     printf "  ${BOLD}${WHITE}🔧 AVAILABLE FIXES${NC}\n"
     echo ""
@@ -939,89 +806,187 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
     echo ""
 
     if ask_yes_no "     Would you like to see available fixes?"; then
-        echo ""
-        line
-        echo ""
-
+        echo ""; line; echo ""
         for i in "${!ISSUES[@]}"; do
             printf "  ${BOLD}${CYAN}[$((i + 1))]${NC} %s\n" "${ISSUES[$i]}"
             printf "      ${DIM}Fix: %s${NC}\n" "${FIX_DESCRIPTIONS[$i]}"
             echo ""
         done
-
-        line
-        echo ""
+        line; echo ""
         printf "  ${BOLD}Options:${NC}\n"
-        printf "     ${CYAN}a${NC} = Fix all issues automatically\n"
-        printf "     ${CYAN}1-${#ISSUES[@]}${NC} = Fix specific issue\n"
-        printf "     ${CYAN}q${NC} = Quit without fixing\n"
+        printf "    ${CYAN}a${NC} = Apply all fixes\n"
+        printf "    ${CYAN}1-${#ISSUES[@]}${NC} = Apply specific fix (e.g., ${CYAN}4${NC})\n"
+        printf "    ${CYAN}1,3,5${NC} = Apply multiple fixes (e.g., ${CYAN}1,2,5${NC})\n"
+        printf "    ${CYAN}1-${#ISSUES[@]}${NC} = Apply range of fixes (e.g., ${CYAN}1-4${NC})\n"
+        printf "    ${CYAN}i${NC} = Interactive mode (review each fix)\n"
+        printf "    ${CYAN}q${NC} = Quit without applying fixes\n"
         echo ""
-        printf "  ${BOLD}Enter your choice:${NC} "
+        printf "  ${BOLD}Choice:${NC} "
         read -r choice < /dev/tty
-
-        echo ""
-        line
         echo ""
 
         case "$choice" in
             [aA])
-                printf "  ${BOLD}${CYAN}Fixing all issues...${NC}\n\n"
-                for i in "${!ISSUES[@]}"; do
-                    printf "  ${ARROW} %s...\n" "${FIX_DESCRIPTIONS[$i]}"
-                    result=$(eval "${FIX_COMMANDS[$i]}" 2>&1)
-                    if [ $? -eq 0 ]; then
-                        printf "     ${CHECK} ${GREEN}Done${NC}"
-                        if [ -n "$result" ]; then
-                            printf " - ${DIM}%s${NC}" "$result"
-                        fi
-                        printf "\n"
-                    else
-                        printf "     ${CROSS} ${RED}Failed${NC}"
-                        if [ -n "$result" ]; then
-                            printf " - ${DIM}%s${NC}" "$result"
-                        fi
-                        printf "\n"
-                    fi
-                    echo ""
-                done
+                apply_all_fixes
+                ;;
+            [iI])
+                apply_fixes_interactively
+                ;;
+            [qQ])
+                printf "${DIM}Skipping fixes.${NC}\n"
+                ;;
+            *-*)
+                apply_fix_range "$choice"
+                ;;
+            *,*)
+                apply_fix_list "$choice"
                 ;;
             [0-9]*)
-                idx=$((choice - 1))
-                if [ "$idx" -ge 0 ] && [ "$idx" -lt ${#ISSUES[@]} ]; then
-                    printf "  ${ARROW} %s...\n" "${FIX_DESCRIPTIONS[$idx]}"
-                    result=$(eval "${FIX_COMMANDS[$idx]}" 2>&1)
-                    if [ $? -eq 0 ]; then
-                        printf "     ${CHECK} ${GREEN}Done${NC}"
-                        if [ -n "$result" ]; then
-                            printf " - ${DIM}%s${NC}" "$result"
-                        fi
-                        printf "\n"
-                    else
-                        printf "     ${CROSS} ${RED}Failed${NC}"
-                        if [ -n "$result" ]; then
-                            printf " - ${DIM}%s${NC}" "$result"
-                        fi
-                        printf "\n"
-                    fi
-                else
-                    printf "  ${CROSS} ${RED}Invalid choice${NC}\n"
-                fi
-                ;;
-            [qQ]|"")
-                printf "  ${DIM}No changes made.${NC}\n"
+                apply_single_fix "$choice"
                 ;;
             *)
-                printf "  ${CROSS} ${RED}Invalid choice${NC}\n"
+                printf "  ${YELLOW}Invalid choice. Skipping fixes.${NC}\n"
                 ;;
         esac
-
-        echo ""
-        line
+        echo ""; line
+    else
+        printf "No fixes applied."
     fi
-fi
+}
 
-echo ""
-printf "${DIM}"
-center "Powered by github.com/scottnailon/macos-health-check"
-printf "${NC}"
-echo ""
+apply_all_fixes() {
+    printf "  ${BOLD}Applying all fixes...${NC}\n\n"
+    for i in "${!ISSUES[@]}"; do
+        printf "  ${ARROW} %s... " "${FIX_DESCRIPTIONS[$i]}"
+        if eval "${FIX_COMMANDS[$i]}" >/dev/null 2>&1; then
+            printf "${CHECK} ${GREEN}Done${NC}\n"
+        else
+            printf "${CROSS} ${RED}Failed${NC}\n"
+        fi
+    done
+}
+
+apply_fixes_interactively() {
+    printf "  ${BOLD}Interactive mode${NC} ${DIM}(review each fix before applying)${NC}\n\n"
+    for i in "${!ISSUES[@]}"; do
+        printf "  ${BOLD}[$((i + 1))/${#ISSUES[@]}]${NC} %s\n" "${ISSUES[$i]}"
+        printf "      ${DIM}Fix: %s${NC}\n" "${FIX_DESCRIPTIONS[$i]}"
+        if ask_yes_no "      Apply this fix?"; then
+            printf "      ${ARROW} Applying... "
+            if eval "${FIX_COMMANDS[$i]}" >/dev/null 2>&1; then
+                printf "${CHECK} ${GREEN}Done${NC}\n"
+            else
+                printf "${CROSS} ${RED}Failed${NC}\n"
+            fi
+        else
+            printf "      ${DIM}Skipped${NC}\n"
+        fi
+        echo ""
+    done
+}
+
+apply_fix_range() {
+    local range="$1"
+    local start=$(echo "$range" | cut -d'-' -f1)
+    local end=$(echo "$range" | cut -d'-' -f2)
+
+    # Validate range
+    if ! [[ "$start" =~ ^[0-9]+$ ]] || ! [[ "$end" =~ ^[0-9]+$ ]]; then
+        printf "  ${RED}Invalid range format. Use format like: 1-3${NC}\n"
+        return
+    fi
+
+    if [ "$start" -lt 1 ] || [ "$end" -gt ${#ISSUES[@]} ] || [ "$start" -gt "$end" ]; then
+        printf "  ${RED}Invalid range. Must be between 1 and ${#ISSUES[@]}${NC}\n"
+        return
+    fi
+
+    printf "  ${BOLD}Applying fixes $start-$end...${NC}\n\n"
+    for ((i=start-1; i<end; i++)); do
+        printf "  ${ARROW} %s... " "${FIX_DESCRIPTIONS[$i]}"
+        if eval "${FIX_COMMANDS[$i]}" >/dev/null 2>&1; then
+            printf "${CHECK} ${GREEN}Done${NC}\n"
+        else
+            printf "${CROSS} ${RED}Failed${NC}\n"
+        fi
+    done
+}
+
+apply_fix_list() {
+    local list="$1"
+    IFS=',' read -ra indices <<< "$list"
+
+    printf "  ${BOLD}Applying selected fixes...${NC}\n\n"
+    for idx in "${indices[@]}"; do
+        # Trim whitespace
+        idx=$(echo "$idx" | xargs)
+
+        # Validate number
+        if ! [[ "$idx" =~ ^[0-9]+$ ]]; then
+            printf "  ${YELLOW}Skipping invalid input: $idx${NC}\n"
+            continue
+        fi
+
+        local array_idx=$((idx - 1))
+        if [ "$array_idx" -lt 0 ] || [ "$array_idx" -ge ${#ISSUES[@]} ]; then
+            printf "  ${YELLOW}Skipping out of range: $idx${NC}\n"
+            continue
+        fi
+
+        printf "  ${ARROW} %s... " "${FIX_DESCRIPTIONS[$array_idx]}"
+        if eval "${FIX_COMMANDS[$array_idx]}" >/dev/null 2>&1; then
+            printf "${CHECK} ${GREEN}Done${NC}\n"
+        else
+            printf "${CROSS} ${RED}Failed${NC}\n"
+        fi
+    done
+}
+
+apply_single_fix() {
+    local choice="$1"
+    local idx=$((choice - 1))
+
+    if [ "$idx" -lt 0 ] || [ "$idx" -ge ${#ISSUES[@]} ]; then
+        printf "  ${RED}Invalid choice. Must be between 1 and ${#ISSUES[@]}${NC}\n"
+        return
+    fi
+
+    printf "  ${ARROW} %s... " "${FIX_DESCRIPTIONS[$idx]}"
+    if eval "${FIX_COMMANDS[$idx]}" >/dev/null 2>&1; then
+        printf "${CHECK} ${GREEN}Done${NC}\n"
+    else
+        printf "${CROSS} ${RED}Failed${NC}\n"
+    fi
+}
+
+# ============ MAIN ============
+
+main() {
+    if [[ "$(uname)" != "Darwin" ]]; then
+        echo "Error: This script only works on macOS"
+        exit 1
+    fi
+
+    check_macos_version
+
+    print_header
+    check_system_load
+    check_top_cpu
+    check_process_analysis
+    check_problem_processes
+    check_memory
+    check_storage
+    check_launch_agents
+    calculate_grade
+    local final_status=$?
+    run_fixes
+
+    echo ""
+    printf "${DIM}"
+    center "Powered by github.com/scottnailon/macos-health-check"
+    printf "${NC}\n"
+    
+    exit $final_status
+}
+
+main "$@"
