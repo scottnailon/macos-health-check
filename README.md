@@ -143,6 +143,15 @@ That's it! No installation required.
 
 ──────────────────────────────────────────────────────────────────────
 
+  🔋 BATTERY HEALTH
+
+     ✓ Battery health is good
+
+     Capacity: 95%  Cycle Count: 38  Condition: Normal
+     [████████████████████████████░░] 95%
+
+──────────────────────────────────────────────────────────────────────
+
   🚀 LAUNCH AGENTS & DAEMONS
 
      ── User Launch Agents ──
@@ -265,10 +274,11 @@ Some issues are detected and explained, but **cannot be automatically fixed** be
 | **Recent Crashes**       | Crash logs in last 24h          | Indicates unstable software                                |
 
 ### Resource Monitoring
-| Resource    | Warning    | Critical   |
-|-------------|------------|------------|
-| **Memory**  | > 70% used | > 85% used |
-| **Storage** | > 75% full | > 90% full |
+| Resource    | Warning              | Critical           |
+|-------------|----------------------|--------------------|
+| **Memory**  | > 70% used           | > 85% used         |
+| **Storage** | > 75% full           | > 90% full         |
+| **Battery** | 70-80% peak capacity | ≤70  peak capacity |
 
 ## 🏆 Health Grades
 
